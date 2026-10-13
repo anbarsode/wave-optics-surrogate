@@ -2,3 +2,6 @@ relative_binning_chang_refsdal_v5.pdf
 .ipynb_checkpoints
 AGENTS.md
 WRITING_STYLE.md
+*.jpg
+*.json
+__pycache__
