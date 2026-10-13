@@ -1,4 +1,4 @@
-"""Verify the Fermat Taylor series through degree 14 using SageMath.
+"""Verify the Fermat Taylor series through degree 22 using SageMath.
 
 Run with ``DOT_SAGE=/tmp/wave_optics_sage sage bgo/derive.sage`` in gw.
 The finite formulas implemented in expansion.py and reported in REPORT.md are
@@ -16,8 +16,8 @@ q = 2*u/r + (u*u + v*v)/r**2
 
 for lens in ('PM', 'SIS'):
     potential = polynomials.zero()
-    generated = _terms(lens, a if lens == 'PM' else b, r, 14)
-    for k in range(1, 15):
+    generated = _terms(lens, a if lens == 'PM' else b, r, 22)
+    for k in range(1, 23):
         coefficient = (-a/2)*(-1)**(k+1)/k if lens == 'PM' else -b*r*binomial(QQ(1)/2, k)
         potential += coefficient*q**k
         if k < 3:
@@ -28,7 +28,7 @@ for lens in ('PM', 'SIS'):
         formula = sum((c*u**powers[0]*v**powers[1]
                        for powers, c in generated[k-3].items()), polynomials.zero())
         assert direct == formula
-    print(f'{lens}: P3 through P14 agree with the Sage Taylor expansion')
+    print(f'{lens}: P3 through P22 agree with the Sage Taylor expansion')
 
 # The central SIS term follows by differentiating the leading conical integral
 # with respect to source position. This check also covers a rotated shear.
@@ -57,7 +57,7 @@ for lens in ('PM', 'SIS'):
     print(f'{lens} isolated c2 = {factor(second)}')
 
 
-# Check that double-precision Wick contractions remain accurate in a generic
+# Check that multiprecision numerical Wick contractions remain accurate in a generic
 # indefinite (saddle) Hessian with a nonzero off-diagonal entry. This tests
 # the high-order numerical implementation separately from the exact Taylor
 # polynomial identity above.
@@ -66,20 +66,21 @@ R = RealField(120)
 g_high = matrix(R, [[R('4.25'), R('0.7')], [R('0.7'), R('-5.5')]])
 g_float = np.array([[4.25, 0.7], [0.7, -5.5]])
 for lens in ('PM', 'SIS'):
-    high = image_series_coefficients(lens, R(1), R('1.03'), g_high, 6)
-    low = image_series_coefficients(lens, 1., 1.03, g_float, 6)
-    assert all(abs((high[k]-R(low[k]))/high[k]) < 1e-11 for k in range(1, 7))
-print('Sixth-order Gaussian contractions: 120-bit comparison verified')
+    high = image_series_coefficients(lens, R(1), R('1.03'), g_high, 10)
+    low = image_series_coefficients(lens, 1., 1.03, g_float, 10)
+    assert all(abs((high[k]-R(low[k]))/high[k]) < 1e-10 for k in range(1, 7))
+    assert all(abs((high[k]-R(low[k]))/high[k]) < 1e-10 for k in range(7, 11))
+print('Tenth-order Gaussian contractions: 120-bit comparison verified')
 
 
 # SageMath carries out every Wick contraction exactly over Q[g11,g12,g22]
 # at unit strength and radius. The general-parameter expression remains the
 # finite formula in REPORT.md; the coefficients below check its full algebra
-# through sixth order, including off-diagonal shear terms.
+# through tenth order, including off-diagonal shear terms.
 gaussian_ring = PolynomialRing(QQ, ('g11', 'g12', 'g22'))
 g11, g12, g22 = gaussian_ring.gens()
 generic_inverse = matrix(gaussian_ring, [[g11, g12], [g12, g22]])
 for lens in ('PM', 'SIS'):
-    coefficients = image_series_coefficients(lens, QQ(1), QQ(1), generic_inverse, 6)
+    coefficients = image_series_coefficients(lens, QQ(1), QQ(1), generic_inverse, 10)
     counts = [len(c.dict()) if hasattr(c, 'dict') else 1 for c in coefficients]
-    print(f'{lens} exact symbolic Wick monomials, orders 0-6: {counts}')
+    print(f'{lens} exact symbolic Wick monomials, orders 0-10: {counts}')

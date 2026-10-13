@@ -1,0 +1,3 @@
+# Keep reproducible report figures and numerical measurements in this directory.
+*.jpg
+*.json

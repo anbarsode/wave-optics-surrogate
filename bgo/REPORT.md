@@ -1,390 +1,234 @@
-# Wave-optics amplification through sixth order beyond geometric optics
+# PM and SIS wave optics with convergence and shear: ten orders beyond geometric optics
 
-## Conventions and range of the expansion
+## Scope and conventions
 
-The thin-lens amplification factor is
-
+A constant external convergence and arbitrary two-component shear have potential
 \[
- F(w,\boldsymbol y)=\frac{w}{2\pi i}\int_{\mathbb R^2}d^2x\,
-    \exp\{iw[\tau(\boldsymbol x,\boldsymbol y)-\tau_0]\},
- \qquad w=2\pi f t_0,
+ \psi_{\rm ext}(\boldsymbol x)
+ =\frac{\kappa}{2}|\boldsymbol x|^2+
+   \frac{\gamma_1}{2}(x_1^2-x_2^2)+\gamma_2x_1x_2,\qquad
+ A=(1-\kappa)I-
+ \begin{pmatrix}\gamma_1&\gamma_2\\\gamma_2&-\gamma_1\end{pmatrix}.
 \]
+Thus the analysis covers the full quadratic external tidal potential, including all orientations and convergence. It does not assume that the source lies on a shear axis. A spatially varying external potential would need its own third through twenty-second derivatives.
 
-where \(\tau_0\) is the smallest ordinary-image Fermat potential. If
-\(\theta_0\) is the angular scale used for \(\boldsymbol x=\boldsymbol\theta/\theta_0\)
-and \(\boldsymbol y=\boldsymbol\beta/\theta_0\), then
-
+Write \(a>0\) for PM strength, \(b>0\) for SIS strength, and \(w=2\pi f t_0>0\). In the angular normalization \(\boldsymbol x=\boldsymbol\theta/\theta_0\), \(\boldsymbol y=\boldsymbol\beta/\theta_0\),
 \[
- t_0=\frac{(1+z_L)D_LD_S}{cD_{LS}}\theta_0^2,
- \quad a=\left(\frac{\theta_{E,\rm PM}}{\theta_0}\right)^2,
- \quad b=\frac{\theta_{E,\rm SIS}}{\theta_0},
+ t_0=\frac{(1+z_L)D_LD_S}{cD_{LS}}\theta_0^2,\quad
+ a=(\theta_{E,\rm PM}/\theta_0)^2,\quad b=\theta_{E,\rm SIS}/\theta_0.
 \]
-
-with \(\theta_{E,\rm PM}^2=4GM D_{LS}/(c^2D_LD_S)\) and
-\(\theta_{E,\rm SIS}=4\pi(\sigma_v/c)^2D_{LS}/D_S\).
-For a PM with \(\theta_0=\theta_{E,\rm PM}\), this gives
-\(t_0=4GM_{Lz}/c^3\). Here \(D_L,D_S,D_{LS}\) are angular-diameter
-distances, \(z_L\) is lens redshift, \(M_{Lz}=(1+z_L)M\), and \(\sigma_v\)
-is the SIS velocity dispersion. All plots use \(w\), so no physical mass or
-distance is assumed. The potential and normalization follow [Takahashi and Nakamura
-(2003)](https://arxiv.org/abs/astro-ph/0305055) and [Takahashi
-(2004)](https://arxiv.org/abs/astro-ph/0402165).
-
-Let \(a>0\) be the point-mass strength, \(b>0\) the SIS deflection strength,
-and
-
+The normalization used by the code and plots is
 \[
- \Gamma=\begin{pmatrix}\gamma_1&\gamma_2\\\gamma_2&-\gamma_1\end{pmatrix},
- \qquad A=I-\Gamma,\qquad \gamma=(\gamma_1^2+\gamma_2^2)^{1/2}.
+ F(w)=\frac{w}{2\pi i}\int_{\mathbb R^2}
+       e^{iw[\tau(\boldsymbol x,\boldsymbol y)-\tau_{\min}]}d^2x,
 \]
+where \(\tau_{\min}\) is the smallest ordinary-image Fermat value. The local calculations below are valid for any \((\kappa,\gamma_1,\gamma_2,\boldsymbol y,a/b)\) with isolated nonsingular ordinary images and, for the SIS center series, \(|\boldsymbol y|\ne b\). In particular, the formulae do not impose \(\gamma_2=0\), \(\kappa=0\), or unit strength. A globally conventional oscillatory diffraction integral is simplest when \(A\) is positive definite, \(\kappa+\sqrt{\gamma_1^2+\gamma_2^2}<1\); outside that sector its normalization at infinity needs care. Caustics, the aligned PM Einstein ring, and the SIS center transition are physical parameter values requiring uniform approximations. An ordinary saddle expansion of any finite order diverges there.
 
-The full parameter set is \((w,\boldsymbol y,a,\gamma_1,\gamma_2)\) for a
-point mass and \((w,\boldsymbol y,b,\gamma_1,\gamma_2)\) for an SIS, with
-\(\gamma_1=\gamma_2=0\) for isolated lenses. Rotation of axes removes one
-orientation parameter, but the formulae retain both shear components. The
-standard bounded external-field setting is \(0\leq\gamma<1\). The image
-formulae below also give local solutions for other shears whenever their
-Hessians are nonsingular, although the diffraction integral at infinity then
-needs a separate normalization prescription.
+## Four lens models: Fermat potential and geometric optics
 
-These are **high-frequency, fixed-parameter asymptotic formulae**. They apply
-to every ordinary-image region where all relevant images are isolated and have
-nonzero Hessian determinant. At a caustic, that determinant is zero, so an
-ordinary saddle expansion diverges. The SIS has an additional center
-transition at \(|\boldsymbol y|=b\), where its central term diverges. A finite
-second-order ordinary-saddle formula cannot hold *at* these physically allowed
-parameter values. Airy or Pearcey uniform approximations, together with a
-uniform treatment of the SIS center transition, are separate calculations.
-This distinction is essential when interpreting the four-image comparisons.
-
-## Fermat potentials and geometric optics
-
-Writing \(r=|\boldsymbol x|\), the four potentials are
-
-| Lens | Fermat potential \(\tau(\boldsymbol x,\boldsymbol y)\) |
-|---|---|
-| PM | \(\tfrac12|\boldsymbol x-\boldsymbol y|^2-a\log r\) |
-| SIS | \(\tfrac12|\boldsymbol x-\boldsymbol y|^2-br\) |
-| PM + external shear | \(\tfrac12|\boldsymbol x-\boldsymbol y|^2-a\log r-\tfrac12\boldsymbol x^T\Gamma\boldsymbol x\) |
-| SIS + external shear | \(\tfrac12|\boldsymbol x-\boldsymbol y|^2-br-\tfrac12\boldsymbol x^T\Gamma\boldsymbol x\) |
-
-An image \(\boldsymbol x_j\ne0\) obeys
-
-\[
- A\boldsymbol x_j-\frac{a\boldsymbol x_j}{r_j^2}=\boldsymbol y
- \quad\text{(PM)},\qquad
- A\boldsymbol x_j-\frac{b\boldsymbol x_j}{r_j}=\boldsymbol y
- \quad\text{(SIS)}.
-\]
-
-The Hessian, signed magnification, and Morse count are
-
-\[
- H_j^{\rm PM}=A-\frac{a}{r_j^2}I+\frac{2a}{r_j^2}\boldsymbol e_j\boldsymbol e_j^T,
- \qquad
- H_j^{\rm SIS}=A-\frac b{r_j}(I-\boldsymbol e_j\boldsymbol e_j^T),
- \qquad \mu_j=\frac1{\det H_j},
-\]
-
-where \(\boldsymbol e_j=\boldsymbol x_j/r_j\), and \(m_j\in\{0,1,2\}\) counts
-the negative eigenvalues of \(H_j\). Thus every model has the same geometric
-formula,
-
-\[
- F_{\rm geo}=\sum_j\frac{\exp[iw(\tau_j-\tau_0)-i\pi m_j/2]}
-                             {\sqrt{|\det H_j|}}.
-\]
-
-For an isolated PM, orient the first axis along the source and set
-\(y=|\boldsymbol y|>0\). Its two images lie at
-\(x_\pm=(y\pm\sqrt{y^2+4a})/2\), have
-\(\mu_\pm=[1-a^2/x_\pm^4]^{-1}\), and have delay difference
-\[
- \Delta\tau=\frac{y\sqrt{y^2+4a}}2+
- a\log\frac{\sqrt{y^2+4a}+y}{\sqrt{y^2+4a}-y}.
-\]
-For an isolated SIS, \(x_+=y+b\) always exists. If \(0<y<b\), a saddle
-\(x_-=y-b\) also exists; \(\mu_+=1+b/y\), \(\mu_-=1-b/y\), and
-\(\Delta\tau=2by\). For \(y>b\), only \(x_+\) is an ordinary image.
-
-For either sheared lens, rotate into the eigenbasis of \(A\), with
-\(\lambda_1=1-\gamma\), \(\lambda_2=1+\gamma\), and source components
-\((y_1,y_2)\). Write \(t=a/r^2\) for PM or \(t=b/r\) for SIS. Away from a
-zero denominator, each image is \(x_i=y_i/(\lambda_i-t)\), where the positive
-real values of \(t\) solve the respective quartic
-
+The four named families are recovered from two general formulae:
 \[
  \begin{aligned}
- \text{PM: }&t\{y_1^2(\lambda_2-t)^2+y_2^2(\lambda_1-t)^2\}
-     -a(\lambda_1-t)^2(\lambda_2-t)^2=0,\\
- \text{SIS: }&t^2\{y_1^2(\lambda_2-t)^2+y_2^2(\lambda_1-t)^2\}
-     -b^2(\lambda_1-t)^2(\lambda_2-t)^2=0.
+ \tau_{\rm PM}&=\tfrac12|\boldsymbol x-\boldsymbol y|^2-a\log r
+             -\tfrac{\kappa}{2}r^2-\tfrac12\boldsymbol x^T\Gamma\boldsymbol x,\\
+ \tau_{\rm SIS}&=\tfrac12|\boldsymbol x-\boldsymbol y|^2-br
+             -\tfrac{\kappa}{2}r^2-\tfrac12\boldsymbol x^T\Gamma\boldsymbol x,
+ \quad r=|\boldsymbol x|.
  \end{aligned}
 \]
-
-On a symmetry axis, \(y_i=0\) can allow \(t=\lambda_i\); those images are
-obtained directly from the lens equation and are included by the code. The
-quartics therefore specify the complete ordinary-image sum in the one, two,
-and four-image regions without assuming that the source lies on a shear axis.
-
-## First- and second-order image terms
-
-At each image, choose local radial and transverse displacements \((u,v)\).
-The Fermat potential has the expansion
-\(\tau=\tau_j+\tfrac12(u,v)H_j^{\rm local}(u,v)^T+
-P_3+P_4+P_5+P_6+\cdots\), where \(P_n\) is homogeneous of degree \(n\).
-External shear is quadratic, so its effect on orders three through six enters
-only through the image position and the Hessian. SageMath's polynomial
-expansion in [derive.sage](derive.sage) gives
-
-| Model | \(P_3\) | \(P_4\) |
-|---|---|---|
-| PM | \(a(-u^3/3+uv^2)/r^3\) | \(a(u^4/4-3u^2v^2/2+v^4/4)/r^4\) |
-| SIS | \(buv^2/(2r^2)\) | \(b(-u^2v^2/2+v^4/8)/r^3\) |
-
-| Model | \(P_5\) | \(P_6\) |
-|---|---|---|
-| PM | \(a(-u^5/5+2u^3v^2-uv^4)/r^5\) | \(a(u^6/6-5u^4v^2/2+5u^2v^4/2-v^6/6)/r^6\) |
-| SIS | \(b(u^3v^2/2-3uv^4/8)/r^4\) | \(b(-u^4v^2/2+3u^2v^4/4-v^6/16)/r^5\) |
-
-Here \(r=r_j\). These polynomials already contain their Taylor factorials.
-Define a formal Gaussian average \(\langle\cdot\rangle_j\) by covariance
-\(G_j=(H_j^{\rm local})^{-1}\). It is valid algebraically for minima,
-saddles, and maxima, including indefinite \(G_j\). An explicit finite formula
-for every required monomial is
-
+Set \((\kappa,\Gamma)=(0,0)\) for isolated PM/SIS; set \(\kappa=0\) for their shear-only versions; retain both for the general external-potential versions. Images solve
 \[
- \langle u^m v^n\rangle_j=m!n!
- \sum_{\substack{2k+\ell=m\\\ell+2h=n}}
- \frac{(G_{11}/2)^kG_{12}^{\ell}(G_{22}/2)^h}{k!\ell!h!}.
+ A\boldsymbol x-\frac{a}{r^2}\boldsymbol x=\boldsymbol y\quad(\rm PM),\qquad
+ A\boldsymbol x-\frac b r\boldsymbol x=\boldsymbol y\quad(\rm SIS).
 \]
-
-Consequently the coefficients are analytical functions of the complete lens
-parameters through the quartic image positions:
-
+Their Hessians and geometric contribution are
 \[
- \boxed{\begin{aligned}
- c_{1j}&=-\langle P_4\rangle_j+\tfrac12\langle P_3^2\rangle_j,\\
- c_{2j}&=\langle P_6\rangle_j-\langle P_3P_5\rangle_j
- -\tfrac12\langle P_4^2\rangle_j
- +\tfrac12\langle P_3^2P_4\rangle_j
- -\tfrac1{24}\langle P_3^4\rangle_j.
- \end{aligned}}\tag{1}
+ H_{\rm PM}=A-\frac a{r^2}I+\frac{2a}{r^2}\boldsymbol e_r\boldsymbol e_r^T,\qquad
+ H_{\rm SIS}=A-\frac b r(I-\boldsymbol e_r\boldsymbol e_r^T),
 \]
-
-This compact finite-polynomial expression avoids a many-line rational
-polynomial in \(a,b,r,G_{11},G_{12},G_{22}\). No integrals or derivatives remain
-in Eq. (1). The ordinary-image contribution through second order is
-
 \[
- \boxed{F_{\rm images}^{(2)}=
- \sum_j\frac{e^{iw(\tau_j-\tau_0)-i\pi m_j/2}}{\sqrt{|\det H_j|}}
- \left(1+\frac{i c_{1j}}w+\frac{c_{2j}}{w^2}\right).}\tag{2}
+ F_{\rm geo}=\sum_j\frac{
+ e^{iw(\tau_j-\tau_{\min})-i\pi m_j/2}}{\sqrt{|\det H_j|}},
+ \qquad m_j=\#\{\text{negative Hessian eigenvalues}\}.
 \]
+These equations give the image magnification \(\mu_j=1/\det H_j\) and phase in every one-, two-, or four-image region.
 
-For PM, Eq. (1) reproduces the published first-order coefficient
-\((4x_j^2-1)/[3(x_j^2+1)^3(x_j^2-1)]\) when \(a=1\) and the shear vanishes
-([Takahashi 2004, Eq. 27](https://arxiv.org/html/astro-ph/0402165)).
-For the isolated lenses, SageMath also reduces Eq. (1) to short rational
-formulae. With \(\rho=r_j/\sqrt a\) for PM,
-
+For an analytic specification of all ordinary image locations, rotate into the eigenbasis of \(A\). Put \(\gamma=(\gamma_1^2+\gamma_2^2)^{1/2}\), \(\lambda_{1,2}=1-\kappa\mp\gamma\), and \(t=a/r^2\) (PM) or \(t=b/r\) (SIS). Unless a denominator vanishes, \(x_i=y_i/(\lambda_i-t)\), where the positive real roots satisfy
 \[
- c_{1j}^{\rm PM}=\frac1a\frac{4\rho^2-1}
- {3(\rho^2+1)^3(\rho^2-1)},\qquad
- c_{2j}^{\rm PM}=-\frac1{a^2}
- \frac{108\rho^8-144\rho^6+124\rho^4-8\rho^2+1}
- {18(\rho^2+1)^6(\rho^2-1)^2}.
+ \begin{array}{ll}
+ {\rm PM}:&
+ t[y_1^2(\lambda_2-t)^2+y_2^2(\lambda_1-t)^2]
+ -a(\lambda_1-t)^2(\lambda_2-t)^2=0,\\
+ {\rm SIS}:&
+ t^2[y_1^2(\lambda_2-t)^2+y_2^2(\lambda_1-t)^2]
+ -b^2(\lambda_1-t)^2(\lambda_2-t)^2=0.
+ \end{array}
 \]
+The code also solves symmetry-axis roots with \(t=\lambda_i\) directly. It checks every candidate against the original vector lens equation. For zero external field, PM has \(x_\pm=(y\pm\sqrt{y^2+4a})/2\). SIS has \(x_+=y+b\), and \(x_-=y-b\) when \(0<y<b\).
 
-With \(\rho=r_j/b\) for SIS,
+## Explicit analytical terms through order ten
 
+At each ordinary image use local radial/transverse coordinates \((u,v)\), let \(r=r_j\), and write
+\(\tau=\tau_j+\frac12(u,v)H_j^{\rm local}(u,v)^T+\sum_{n=3}^{22}P_n(u,v)+\cdots\).
+The external potential is quadratic, so every \(P_n\), \(n\ge3\), comes from the PM or SIS itself. The following finite formula gives every coefficient required for \(K\le10\). Put \(h=n-2q\):
 \[
- c_{1j}^{\rm SIS}=\frac1{b^2}\frac1{8\rho^2(\rho-1)},\qquad
- c_{2j}^{\rm SIS}=-\frac1{b^4}
- \frac{3(8\rho-5)}{128\rho^4(\rho-1)^2}.
+ [u^h v^{2q}]P_n^{\rm PM}=\frac a{r^n}
+ \begin{cases}(-1)^n/n,&q=0,\\
+ (-1)^{q+h}\binom{n-1}{h}/(2q),&q\ge1,\end{cases}
 \]
-
-The SIS expressions are the *ordinary-image* coefficients and must be used
-together with Eq. (3). The sheared coefficients remain exactly specified by
-the finite monomial formula in Eq. (1), with no assumption about orientation.
-
-## The SIS center contribution
-
-The cusp at \(\boldsymbol x=0\) is not an ordinary image. It contributes at
-order \(w^{-1}\), so omitting it would make both SIS formulae wrong at their
-stated order. Put
-\(z=b^2-|\boldsymbol y|^2-i0\) and
-\(\tau_c=|\boldsymbol y|^2/2\). For \(|\boldsymbol y|\ne b\), the result through
-second order is
-
 \[
- \boxed{F_{\rm center}^{(2)}=
- e^{iw(\tau_c-\tau_0)}\left[
- \frac{ib}{wz^{3/2}}+
- \frac b{2w^2}\left\{
- \frac{3\operatorname{tr}A}{z^{5/2}}+
- \frac{15\boldsymbol y^TA\boldsymbol y}{z^{7/2}}
- \right\}\right].}\tag{3}
+ [u^h v^{2q}]P_n^{\rm SIS}=
+ \begin{cases}0,&q=0,\\
+ -\dfrac b{r^{n-1}}\binom{1/2}{q}(-1)^h
+ \binom{2q+h-2}{h},&q\ge1.\end{cases}
 \]
-
-The \(-i0\) gives the outgoing-wave branch: the first coefficient is
-\(ib/(b^2-y^2)^{3/2}\) for \(y<b\), and
-\(b/(y^2-b^2)^{3/2}\) for \(y>b\), agreeing with
-[Takahashi's leading center result](https://arxiv.org/html/astro-ph/0402165).
-To derive the second coefficient, scale \(\boldsymbol x=\boldsymbol u/w\)
-at the center and expand
-\(\exp[i\boldsymbol u^TA\boldsymbol u/(2w)]\). Multiplication by
-\(u_i u_j\) is \(-\partial_{y_i}\partial_{y_j}\) on the leading conical
-integral, yielding Eq. (3). The SageMath derivative identity is checked in
-`derive.sage`. Thus, for either SIS model,
-\(F^{(2)}=F_{\rm images}^{(2)}+F_{\rm center}^{(2)}+O(w^{-3})\).
-For either PM model, \(F^{(2)}=F_{\rm images}^{(2)}+O(w^{-3})\).
-
-## Third through sixth order
-
-The local Taylor polynomials through degree $14$ give six orders beyond geometric optics. Write $h=n-2j$ and let $[u^h v^{2j}]P_n$ denote the coefficient of that monomial. For every $n\ge3$, the two lens families have explicit coefficients
-
+All coefficients with odd transverse degree vanish. For clarity, the first local terms are
 \[
- [u^h v^{2j}]P_n^{\rm PM}=\frac{a}{r^n}
- \begin{cases}(-1)^n/n,&j=0,\\
- (-1)^{j+h}\binom{n-1}{h}/(2j),&j\ge1,
- \end{cases}
-\qquad
- [u^h v^{2j}]P_n^{\rm SIS}=
- \begin{cases}0,&j=0,\\
- -\dfrac{b}{r^{n-1}}\binom{1/2}{j}(-1)^h
- \binom{2j+h-2}{h},&j\ge1.
- \end{cases}
-\tag{4}
+ \begin{array}{c|cc}
+ &P_3&P_4\\ \hline
+ {\rm PM}&a(-u^3/3+uv^2)/r^3&
+ a(u^4/4-3u^2v^2/2+v^4/4)/r^4\\
+ {\rm SIS}&buv^2/(2r^2)&b(-u^2v^2/2+v^4/8)/r^3 .
+ \end{array}
 \]
+[SageMath verification](derive.sage) expands the potentials directly with exact rational arithmetic through \(P_{22}\).
 
-All odd powers of $v$ vanish. These formulas follow from the Taylor series of
-$-a\log\sqrt{(r+u)^2+v^2}$ and $-b\sqrt{(r+u)^2+v^2}$. [SageMath's direct polynomial expansion](derive.sage) verifies Eq. (4) for every $P_3,\ldots,P_{14}$, with exact rational coefficients. External shear has no cubic or higher derivative, so Eq. (4) applies unchanged to both sheared models at each of their image positions.
-
-Define $B_{0j}=1$. For $1\le k\le6$, an explicit finite analytical expression for all higher-order image coefficients is
-
+Let \(G_j=(H_j^{\rm local})^{-1}\). The Wick average below is an explicit polynomial, valid also for indefinite saddle Hessians:
 \[
- \boxed{B_{kj}=\sum_{\substack{m_3,\ldots,m_{2k+2}\ge0\\
+ \langle u^p v^q\rangle_j=p!q!
+ \sum_{\substack{2l+m=p\\m+2n=q}}
+ \frac{(G_{11}/2)^lG_{12}^{m}(G_{22}/2)^n}{l!m!n!}.
+\]
+Put \(B_{0j}=1\). For every integer \(1\le k\le10\), define the fully analytical finite sum
+\[
+ \boxed{B_{kj}=
+ \sum_{\substack{m_3,\ldots,m_{2k+2}\ge0\\
                   \sum_{n=3}^{2k+2}(n-2)m_n=2k}}
- \frac{(-1)^{\sum_n m_n}}{\prod_n m_n!}
+ \frac{(-1)^{\sum m_n}}{\prod m_n!}
  \left\langle\prod_{n=3}^{2k+2}P_n^{m_n}\right\rangle_j.}
- \tag{5}
+ \tag{1}
 \]
-
-The average is the explicit Wick sum preceding Eq. (1); thus Eq. (5) requires no integration or numerical differentiation. It specifies the third, fourth, fifth, and sixth terms for arbitrary $a$ or $b$, source coordinates, and shear components. The first two terms satisfy $B_{1j}=c_{1j}$ and $B_{2j}=-c_{2j}$. The complete ordinary-image result is
-
+This specifies each of the ten requested coefficients in terms of
+\((a\ {\rm or}\ b,\boldsymbol y,\kappa,\gamma_1,\gamma_2)\) through algebraic image roots. There are no unevaluated integrals or derivatives in Eq. (1). The first two are
 \[
- \boxed{F_{\rm images}^{(K)}(w)=
- \sum_j\frac{e^{iw(\tau_j-\tau_0)-i\pi m_j/2}}{\sqrt{|\det H_j|}}
- \sum_{k=0}^K\frac{i^k B_{kj}}{w^k},\qquad 0\le K\le6.}
- \tag{6}
+ B_{1j}=-\langle P_4\rangle_j+\tfrac12\langle P_3^2\rangle_j,
 \]
-
-For an SIS, the conical center must be expanded to the same order. Let
-$D_A=A_{11}\partial_{y_1}^2+2A_{12}\partial_{y_1}\partial_{y_2}+A_{22}\partial_{y_2}^2$ and $C_0=i b(b^2-|\boldsymbol y|^2-i0)^{-3/2}$. Scaling $\boldsymbol x=\boldsymbol u/w$ in the diffraction integral and expanding its quadratic factor gives
-
 \[
- \boxed{F_{\rm center}^{(K)}(w)=
- e^{iw(\tau_c-\tau_0)}
- \sum_{m=0}^{K-1}\frac{(-i/2)^m}{m!\,w^{m+1}}D_A^m C_0,
- \qquad \tau_c=|\boldsymbol y|^2/2.}
- \tag{7}
+ B_{2j}=\langle P_6\rangle_j-\langle P_3P_5\rangle_j
+ -\tfrac12\langle P_4^2\rangle_j+
+ \tfrac12\langle P_3^2P_4\rangle_j-\tfrac1{24}\langle P_3^4\rangle_j.
 \]
+For isolated unit-strength PM, \(B_1=(4r^2-1)/[3(r^2+1)^3(r^2-1)]\), agreeing with [Takahashi (2004)](https://arxiv.org/abs/astro-ph/0402165). For isolated unit-strength SIS, \(B_1=1/[8r^2(r-1)]\). Higher terms are best kept in Eq. (1): already at \(k=10\), the exact generic PM coefficient has 2,475 distinct monomials in the three entries of \(G\), and the SIS one has 1,005.
 
-Equation (7) includes ten source derivatives at sixth order. The code evaluates these derivatives analytically by a sparse polynomial recurrence. The final result is Eq. (6) for PM and Eq. (6) plus Eq. (7) for SIS. The coefficients depend on every physical parameter through the quartic roots, Hessians, and source derivatives.
+The ordinary-image amplification at cumulative order \(K\) is
+\[
+ \boxed{F_{\rm images}^{(K)}=
+ \sum_j\frac{e^{iw(\tau_j-\tau_{\min})-i\pi m_j/2}}{\sqrt{|\det H_j|}}
+ \sum_{k=0}^{K}\frac{i^k B_{kj}}{w^k},\qquad 0\le K\le10.}
+ \tag{2}
+\]
+Thus Eq. (2) directly covers PM, PM with shear, and PM with convergence plus shear.
 
-### Mathematical range
+### SIS conical center
 
-These are asymptotic series as $w\to\infty$ at *fixed, nondegenerate* lens parameters. At an ordinary-image caustic, $\det H=0$, and at the isolated PM alignment a whole Einstein ring is stationary. The SIS center expansion also becomes singular at $|\boldsymbol y|=b$. Thus no finite-order version of Eqs. (5)–(7) is valid at every physically possible parameter value. Uniform catastrophe or center-transition expansions are needed on those boundaries. An asymptotic series also need not converge: at fixed finite $w$, truncating after the smallest term can be more accurate than including all six terms.
+The SIS has a contribution from its nondifferentiable center, even if there is no central ordinary image. It starts at order \(w^{-1}\); omitting it would invalidate the requested accuracy. Define
+\[
+ z=b^2-|\boldsymbol y|^2-i0,\quad
+ C_0=ibz^{-3/2},\quad
+ D_A=A_{11}\partial_{y_1}^2+2A_{12}\partial_{y_1}\partial_{y_2}
+       +A_{22}\partial_{y_2}^2,\quad
+ \tau_c=|\boldsymbol y|^2/2.
+\]
+Then the SIS center series through the same cumulative order is
+\[
+ \boxed{F_{\rm center}^{(K)}=
+ e^{iw(\tau_c-\tau_{\min})}
+ \sum_{m=0}^{K-1}\frac{(-i/2)^m}{m!\,w^{m+1}}D_A^m C_0.}
+ \tag{3}
+\]
+The \(m=9\) term contains eighteen source derivatives. The code evaluates them by a sparse derivative recurrence, so Eq. (3) is ready for arbitrary inputs. For example its first two terms are
+\[
+ e^{iw(\tau_c-\tau_{\min})}
+ \left[\frac{ib}{wz^{3/2}}+
+ \frac b{2w^2}\left(\frac{3\,{\rm tr}A}{z^{5/2}}+
+       \frac{15\boldsymbol y^TA\boldsymbol y}{z^{7/2}}\right)\right].
+\]
+The \(-i0\) fixes the outgoing-wave branch. The complete SIS result is Eqs. (2) plus (3).
 
-## Numerical comparisons with GLoW
+### Exact mass-sheet check
 
-Each plot shows the full GLoW wave-optics result, cumulative orders zero through six, and the normalized complex error. The error denominator is $\max(|F_{\rm GLoW}|,0.2)$ to avoid artificial spikes near interference zeros. The [numerical record](comparison_metrics.json) includes all 121 frequencies per case, the complete order-dependent errors, selected complex $F$ values, and timings. All lenses use unit strength, $a=b=1$; frequencies are dimensionless $w=2\pi f t_0$.
+For \(s=1-\kappa>0\), a change of integration coordinates proves the exact identity
+\[
+ F_{\rm PM}(w,\boldsymbol y,a,\kappa,\Gamma)
+ =s^{-1}F_{\rm PM}(w,\boldsymbol y/\sqrt s,a,0,\Gamma/s),
+\]
+\[
+ F_{\rm SIS}(w,\boldsymbol y,b,\kappa,\Gamma)
+ =s^{-1}F_{\rm SIS}(w,\boldsymbol y/\sqrt s,b/\sqrt s,0,\Gamma/s).
+ \tag{4}
+\]
+The constant phase induced by this change cancels under the \(\tau_{\min}\) normalization. The code checks Eq. (4) separately at orders 0, 1, 6, 8, and 10 for off-axis sources, nonzero shear,
+and \(s=0.6,0.82,1.2\). At order ten the relative discrepancy in that test is about \(10^{-12}\). This also checks all ten SIS center terms.
 
-For isolated PM, GLoW uses its exact analytic point-lens function. For isolated SIS, it uses its semi-analytic frequency solver. For sheared lenses, it uses the multi-contour time response followed by GLoW’s **regularized FFT**, with its singular contribution evaluated exactly. The plotted sheared reference has $N_t=20{,}000$, $t_{\max}=10^4$, and a frequency range extending 20% above the plot. The gray curve is its difference from $N_t=10{,}000$; an $N_t=5{,}000$ run is also timed. GLoW issued contour-bracketing and GSL warnings for some sheared calculations. Resolution spread measures one numerical sensitivity, but it is not a rigorous bound on systematic error.
+## Comparison with full GLoW wave optics
 
-The eight comparison plots cover the one-, two-, and four-image regions:
+The [comparison script](compare.py) and [machine-readable measurements](comparison_metrics.json) use \(y=0.5\) in all thirteen examples. PM always has \(a=1\). The two- and four-image SIS examples have \(b=1\); the one-image SIS examples use \(b=0.4\), because a unit SIS at \(y=0.5\) necessarily has two images. Weak-shear two-image cases use \((\gamma_1,\gamma_2)=(0.05,0.03)\), while four-image cases use \((0.40,0.02)\). The latter is strong enough to place the same \(y=0.5\) source inside the caustic while retaining a positive-definite external quadratic form for both \(\kappa=0\) and \(0.2\).
 
-| Model | Isolated or shear | Plot |
-|---|---|---|
-| PM | isolated, two images | ![PM isolated two](pm_isolated_two_orders_0_to_6.jpg) |
-| PM | shear, two images | ![PM shear two](pm_shear_two_orders_0_to_6.jpg) |
-| PM | shear, four images | ![PM shear four](pm_shear_four_orders_0_to_6.jpg) |
-| SIS | isolated, two images | ![SIS isolated two](sis_isolated_two_orders_0_to_6.jpg) |
-| SIS | isolated, one image | ![SIS isolated one](sis_isolated_one_orders_0_to_6.jpg) |
-| SIS | shear, two images | ![SIS shear two](sis_shear_two_orders_0_to_6.jpg) |
-| SIS | shear, four images | ![SIS shear four](sis_shear_four_orders_0_to_6.jpg) |
-| SIS | shear, one image | ![SIS shear one](sis_shear_one_orders_0_to_6.jpg) |
+Comparing a common numerical \(w\) can still compare different numbers of fringes. For each case define
+\[
+ \Delta\tau=\max_j\tau_j-\min_j\tau_j,
+ \qquad N_\Delta=\frac{w\Delta\tau}{2\pi}.
+\]
+For SIS, the center phase \(\tau_c=y^2/2\) is included among the \(\tau_j\); this is essential in a one-image case. Every new plot spans the same \(N_\Delta=0.5\) to \(20\), samples \(N_\Delta=10\) exactly, and states the corresponding \(w\) range. Thus the comparison now controls both source position and the number of phase oscillations. Each plot contains selected cumulative orders and an error heat map for every order 0 through 10. The plotted error is \(|F_K-F_{\rm GLoW}|/\max(|F_{\rm GLoW}|,0.2)\).
 
-The table below gives $F_{\rm GLoW}$ near $w=20$, the normalized complex error of each cumulative order in percent, and the numerical resolution spread in percent. Zero spread means a dedicated isolated-lens solver was used.
+The isolated and convergence-only references use GLoW's analytic PM or semi-analytic SIS solver with Eq. (4). Generic shear cases use the multi-contour response and regularized FFT at \(N_t=20{,}000\), with the gray curve showing its difference from \(N_t=16{,}000\). GLoW's contour initialization fails for the matched-y four-image PM example, so that one reference uses GLoW's robust area integral at \(n_\rho=80{,}000\), \(n_\theta=4{,}000\), followed by the same regularized FFT; its gray curve compares \(n_\rho=40{,}000\). Resolution spread is a diagnostic rather than a rigorous error bound. GLoW emitted contour-bracketing or saddle-integration warnings in some shear cases.
 
-| Lens and region | $w$ | $F_{\rm GLoW}$ | Errors, orders 0–6 (%) | GLoW spread (%) |
-|---|---:|---:|---|---:|
-| PM / isolated, two images | 19.84 | 0.826-0.858i | 4, 0.15, 0.071, 0.0041, 0.0059, 0.00039, 0.0012 | 0 |
-| PM / shear, two images | 20.05 | 1.087-1.304i | 2.3, 1, 0.49, 0.2, 0.31, 0.48, 0.42 | 0.0024 |
-| PM / shear, four images | 20.05 | 5.988+3.024i | 14, 6.5, 50, 45, 1e+03, 3.2e+03, 7.3e+04 | 0.25 |
-| SIS / isolated, two images | 19.84 | 1.130-1.171i | 2, 0.63, 0.15, 0.14, 0.09, 0.092, 0.1 | 0 |
-| SIS / isolated, one image | 19.84 | 1.303-0.028i | 2.4, 0.89, 0.61, 0.63, 0.87, 1.5, 3.2 | 0 |
-| SIS / shear, two images | 20.05 | 2.106-1.740i | 1.5, 0.69, 0.2, 0.18, 0.062, 0.13, 0.22 | 0.015 |
-| SIS / shear, four images | 20.05 | 8.447+4.094i | 15, 4.9, 50, 51, 1.1e+03, 3.5e+03, 8.1e+04 | 1.4 |
-| SIS / shear, one image | 20.05 | 1.223+0.007i | 2.5, 0.81, 0.73, 0.62, 0.58, 1.2, 2.6 | 0.1 |
+The following heat map compares every case at exactly ten phase cycles. It makes the effect of matched oscillation range directly visible.
 
-For the isolated examples, a conservative 1% onset is the lowest sampled frequency after which *every* higher plotted frequency has error below 1%. This avoids choosing a favorable interference fringe. The onsets for cumulative orders 0–6 are:
+![Matched-y errors at ten phase cycles](matched_y_error_at_ten_cycles.jpg)
 
-| Isolated example | 1% onset $w$ for orders 0–6 |
-|---|---|
-| PM / isolated, two images | 126.9, 8.7, 9.0, 8.1, 8.1, 7.8, 5.4 |
-| SIS / isolated, two images | 160.0, 19.8, 10.9, 10.2, 10.9, 11.3, 12.5 |
-| SIS / isolated, one image | 53.6, 18.6, 16.3, 18.0, 19.8, 21.9, 24.2 |
+### PM: isolated, convergence, shear, and convergence plus shear
 
-The isolated PM gains a lower 1% onset overall, reaching about $w=5.4$ at order six, although intermediate onsets are not monotone. The isolated SIS two-image series is most useful at moderate order near $w=10$; order six needs about $w=12.5$ for the same 1% bound. The isolated SIS one-image series reaches 1% near $w=16.3$ at order two, while order six needs about $w=24.2$. These are actual counterexamples to a claim that each added asymptotic term must extend the agreement to lower frequency. At higher $w$, the sixth-order error is far smaller than lower-order errors, which checks the coefficients independently against the GLoW isolated-lens solvers.
+![PM isolated, two images](pm_isolated_two_orders_0_to_10.jpg)
 
-For the weak-shear four-image examples, order-two and higher corrections become very large around $w=20$. The largest PM image has $|B_6|^{1/6}\simeq66$ and the largest SIS image has $|B_6|^{1/6}\simeq67$. At $w=20$ their sixth-order factors $|B_6|/w^6$ exceed $10^3$: the expansion is being used far below its local high-frequency scale. An optimal truncation there can favor geometric or first order. A uniform caustic approximation is needed to extend these examples toward the caustic. In the PM shear two-image case, the regularized GLoW result agrees closely with the high-frequency expansion. At $w\simeq80$ the change from fifth to sixth order is only about $10^{-6}$ in complex $F$, below the difference between the $N_t=10{,}000$ and $20{,}000$ GLoW results. The visually merged high-order curves therefore reflect the expected powers of $1/w$ and finite reference accuracy. The SIS sheared one- and two-image cases show the same numerical floor at high order.
+![PM convergence, two images](pm_convergence_two_orders_0_to_10.jpg)
 
-### Check of GLoW transform methods
+![PM shear, two images](pm_shear_two_orders_0_to_10.jpg)
 
-A direct transform and a regularized FFT were applied to *the same* PM plus shear time response ($y=0.3$, $\gamma_1=0.05$, $\gamma_2=0$, $N_t=10{,}000$, $t_{\max}=10^4$). Their complex differences from the sixth-order result are:
+![PM convergence and shear, two images](pm_convergence_shear_two_orders_0_to_10.jpg)
 
-| $w$ | Direct transform difference | Regularized FFT difference |
-|---:|---:|---:|
-| 19.95 | 0.3165 | 0.007163 |
-| 39.81 | 0.3133 | 0.0006737 |
-| 79.43 | 0.3135 | 0.0001647 |
+![PM convergence and shear, four images](pm_convergence_shear_four_orders_0_to_10.jpg)
 
-![GLoW transform comparison](reference_diagnostic.jpg)
+### SIS: one, two, and four-image regimes
 
-The direct transform differs by about 0.31 throughout this high-frequency sample, while the regularized FFT difference falls as the asymptotic calculation predicts. The direct transform of a sampled time response is therefore unsuitable as the high-frequency reference for these settings. The [diagnostic script](reference_diagnostic.py) and [values](reference_diagnostic.json) reproduce this check. The regularized FFT includes analytical image singularities, so close agreement with geometric optics alone is partly built into this method; agreement of the higher-order residuals is the more relevant comparison.
+![SIS isolated, two images](sis_isolated_two_orders_0_to_10.jpg)
 
-## Computational cost and rough break-even order
+![SIS isolated, one image](sis_isolated_one_orders_0_to_10.jpg)
 
-At cumulative order $K$, the ordinary-image calculation needs Taylor terms through $P_{2K+2}$. The number of product types in Eq. (5) is the integer-partition count of $2K$; orders three through six require 11, 22, 42, and 77 types per image. Their largest Gaussian degrees are 18, 24, 30, and 36, respectively. A memoized Wick recurrence avoids explicit enumeration of $35!!$ pairings at sixth order. The SIS center needs $2(K-1)$ source derivatives at order $K$.
+![SIS convergence, two images](sis_convergence_two_orders_0_to_10.jpg)
 
-The plot compares the measured wall time for each *cumulative* formula, orders zero through six, with the corresponding GLoW result in all eight examples. Each analytic point is the median of three single-thread evaluations of 121 frequencies and includes image finding and coefficient construction. The GLoW line includes solver construction and evaluation of the same frequencies; sheared cases use the $N_t=20{,}000$ regularized FFT. The dashed curves fit
+![SIS convergence, one image](sis_convergence_one_orders_0_to_10.jpg)
 
-$$
-T_K=A K^p,\qquad K=3,4,5,6,
-$$
+![SIS shear, four images](sis_shear_four_orders_0_to_10.jpg)
 
-by least squares in log time. Diamonds mark the fitted crossings. The gray strips show how the sheared crossing shifts when orders 2–6 are fitted instead. The horizontal axis displays $K+1$ on a log scale so order zero can appear.
+![SIS convergence and shear, two images](sis_convergence_shear_two_orders_0_to_10.jpg)
 
-![Measured and extrapolated computational costs](computational_costs.jpg)
+![SIS convergence and shear, four images](sis_convergence_shear_four_orders_0_to_10.jpg)
 
-The isolated PM special-function solver is already faster than the generic geometric calculation. The isolated SIS two-image example crosses between measured orders 2 and 3; its fit predicts $K\simeq2.7$. The isolated SIS one-image example crosses between measured orders 5 and 6; its fit predicts $K\simeq5.9$.
+![SIS convergence and shear, one image](sis_convergence_shear_one_orders_0_to_10.jpg)
 
-For sheared lenses, the order-3-to-6 power laws predict rough crossings at $K\simeq39$ (PM, two images), $36$ (PM, four), $42$ (SIS, two), $25$ (SIS, four), and $53$ (SIS, one). Changing the fit window to orders 2–6 moves these estimates to about 73, 62, 58, 35, and 59. The [fit parameters and measured times](cost_fit_metrics.json) are saved separately, and [plot_costs.py](plot_costs.py) reproduces the figure.
+Matching \(y\) and \(N_\Delta\) removes a substantial confounding effect. At ten cycles, isolated PM and PM plus convergence have geometric errors \(3.36\times10^{-3}\) and \(3.21\times10^{-3}\), respectively, and both reach roughly \(10^{-9}\) by order six. The isolated and convergence-only two-image SIS cases have identical order-dependent errors, as required by the exact mass-sheet scaling: their geometric error is \(3.28\times10^{-2}\), and order six gives \(7.58\times10^{-5}\).
 
-These sheared crossings are extrapolations far beyond the six implemented orders. The number of partition terms grows faster than any fixed power law at large $K$, so a power-law fit to four measured points may place the true crossing too late. Caching coefficients across repeated frequency calls, changing the number of frequencies, or optimizing the contractions would also change it. The plotted estimates describe this implementation and benchmark, not an intrinsic lens-model limit.
+It does not remove the qualitative difference between regular and singular parameter regions. The convergence-plus-shear four-image PM example is best at order three at ten cycles; order ten has already diverged. The corresponding SIS four-image example is also best at order three. The shear-only four-image SIS is best at order one. In the one-image SIS examples, the center expansion is best at order one and later center derivatives grow rapidly. These failures therefore survive the matched-y, matched-fringe comparison.
 
-## Reproduction and checks
+The reason is that \(N_\Delta\) measures a global interference scale, whereas stationary-phase accuracy is controlled locally by the inverse Hessian and higher derivatives at each image, and for SIS by distance from the center transition \(|y|=b\). Near a caustic, a small Hessian eigenvalue makes the coefficients large even if the signal has completed many fringes. An asymptotic series improves only up to its frequency-dependent optimal truncation order; adding every available term is not expected to improve it monotonically. Where the gray GLoW spread is comparable to the plotted error, no order-by-order numerical claim is made.
 
-Run in the `gw` micromamba environment:
+## Cumulative computational cost
 
-```bash
-DOT_SAGE=/tmp/wave_optics_sage /home/ankur/micromamba/envs/gw/bin/sage bgo/derive.sage
-/home/ankur/micromamba/envs/gw/bin/python bgo/validate.py
-/home/ankur/micromamba/envs/gw/bin/python bgo/compare.py
-/home/ankur/micromamba/envs/gw/bin/python bgo/reference_diagnostic.py
-/home/ankur/micromamba/envs/gw/bin/python bgo/plot_costs.py
-```
+The [cost plot](computational_costs_orders_0_to_10.jpg) measures complete one-thread evaluation of 121 frequencies, including image solving and construction of all coefficients through \(K\). The horizontal line is the complete GLoW reference computation used for that example. The [fit data](cost_fit_metrics.json) fit \(T_K=A K^p\) over \(K=7,\ldots,10\), and record sensitivity to fitting \(K=6,\ldots,10\). These are empirical local fits, not complexity laws: the partition count and high-precision cancellations make distant extrapolations unreliable. For the isolated lenses, GLoW's dedicated analytic or semi-analytic solver is already faster than high-order symbolic evaluation. For generic shear, measured order ten is generally below the cost of constructing the GLoW time response; the fitted shear-case crossing is roughly order 11 to 15 in these matched-y configurations and remains only a rough estimate.
 
-`derive.sage` verifies the exact Taylor coefficients $P_3$ through $P_{14}$, the lower-order isolated rational expressions, exact symbolic Wick contractions through sixth order, and floating-point coefficients against 120-bit arithmetic in a generic indefinite Hessian. `validate.py` checks published PM first order, all represented image counts, rotation covariance, isolated-lens errors through order six, and high-frequency agreement with GLoW’s regularized FFT in sheared two-image cases. The plotting code uses one CPU thread and saves 200-dpi JPEGs. If `dvipng` is unavailable, it prints an installation instruction and uses Matplotlib's built-in mathematics renderer.
+![Cumulative computational cost and power-law fits](computational_costs_orders_0_to_10.jpg)
+
+## Reproduction and limits
+
+Use the gw environment: sage bgo/derive.sage, python bgo/validate.py, python bgo/compare.py, and python bgo/plot_costs.py. Call the amplification function from [expansion.py](expansion.py); model is PM or SIS, source is a two-vector, and \(0\le K\le10\). Orders seven through ten use 80-digit contractions because double precision suffers severe cancellation. In the GLoW plots, \(w\) is dimensionless; a physical \(f\) requires the chosen mass, distances, and \(\theta_0\). The method is a high-frequency fixed-parameter expansion and does not replace uniform caustic or SIS center-transition wave optics.

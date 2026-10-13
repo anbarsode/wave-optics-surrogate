@@ -1,4 +1,4 @@
-"""Stationary-phase amplification through sixth order for PM and SIS lenses.
+"""Stationary-phase amplification through tenth order for PM and SIS lenses.
 
 The full derivation, including the SIS conical-center series, is in REPORT.md.
 All coefficients are finite sums of lens parameters, image positions, and H^-1.
@@ -27,12 +27,12 @@ def _multiply(p, q):
     return result
 
 
-def _terms(model, strength, radius, max_order=6):
+def _terms(model, strength, radius, max_order=22):
     """Return P3,...,Pmax as homogeneous local Fermat polynomials.
 
     For PM, Pn is the degree-n part of -a log(sqrt((r+u)^2+v^2)).
     For SIS, it is the degree-n part of -b sqrt((r+u)^2+v^2).
-    External shear is quadratic and adds no terms here.
+    External convergence and shear are quadratic and add no terms here.
     """
     result = []
     r = radius
@@ -68,16 +68,28 @@ def _partitions(total, largest=None):
             yield rest + (count,)
 
 
-def image_series_coefficients(model, strength, radius, inverse_hessian, order=6):
+def image_series_coefficients(model, strength, radius, inverse_hessian, order=10):
     """Return B0,...,BK for image factor sum (i/w)^k Bk.
 
-    Bk = sum_{sum(n-2)m_n=2k} (-1)^M/<product m_n!>
+    Bk = sum_{sum(n-2)m_n=2k} (-1)^M/(product m_n!)
          times the Wick average of product P_n**m_n, M=sum m_n.
     This formula follows by x-x_j=z/sqrt(w), Taylor expansion of the
     nonquadratic phase, and Gaussian integration. It includes all diagrams.
     """
-    if not 0 <= order <= 6:
-        raise ValueError('order must be from zero to six')
+    if not 0 <= order <= 10:
+        raise ValueError('order must be from zero to ten')
+    # High orders involve severe cancellation between Wick diagrams. Carry
+    # numeric contractions at 80 digits, then return ordinary real scalars.
+    if order >= 7 and isinstance(radius, (int, float, np.integer, np.floating)):
+        from mpmath import mp
+        with mp.workdps(80):
+            high_inverse = mp.matrix([
+                [mp.mpf(str(float(inverse_hessian[i, j]))) for j in range(2)]
+                for i in range(2)])
+            result = image_series_coefficients(
+                model, mp.mpf(str(float(strength))), mp.mpf(str(float(radius))),
+                high_inverse, order)
+            return tuple(float(value) for value in result)
     if order == 0:
         return (1,)
     terms = _terms(model, strength, radius, 2*order+2)
@@ -118,20 +130,21 @@ def image_coefficients(model, strength, radius, inverse_hessian):
     return b1, -b2
 
 
-def _images(model, source, strength, shear):
+def _images(model, source, strength, shear, convergence=0.0):
     """Find all ordinary images from the quartic radial lens equation."""
+    strength = float(strength)
     gamma1, gamma2 = shear
     gamma = np.hypot(gamma1, gamma2)
     angle = np.arctan2(gamma2, gamma1)/2 if gamma else 0.0
     rotation = np.array([[np.cos(angle), -np.sin(angle)],
                          [np.sin(angle), np.cos(angle)]])
     y = rotation.T @ np.asarray(source, dtype=float)
-    lam = np.array([1-gamma, 1+gamma])
+    lam = np.array([1-convergence-gamma, 1-convergence+gamma])
     t = np.poly1d([1.0, 0.0])
     d0, d1 = float(lam[0])-t, float(lam[1])-t
     radial = t if model == 'PM' else t*t
     power = 1 if model == 'PM' else 2
-    polynomial = radial*(float(y[0]**2)*d1*d1+float(y[1]**2)*d0*d0) - strength**power*d0*d0*d1*d1
+    polynomial = radial*(float(y[0]**2)*d1*d1+float(y[1]**2)*d0*d0) - float(strength**power)*d0*d0*d1*d1
     candidates = []
     for root in polynomial.r:
         if abs(root.imag) > 1e-8*max(1, abs(root.real)) or root.real <= 0:
@@ -159,7 +172,8 @@ def _images(model, source, strength, shear):
         x = rotation @ local
         r = np.linalg.norm(x)
         factor = strength/r**2 if model == 'PM' else strength/r
-        matrix = np.array([[1-gamma1, -gamma2], [-gamma2, 1+gamma1]])
+        matrix = np.array([[1-convergence-gamma1, -gamma2],
+                           [-gamma2, 1-convergence+gamma1]])
         residual = matrix @ x - factor*x - source
         if np.linalg.norm(residual) > 1e-6 or any(np.linalg.norm(x-z) < 1e-7 for z in images):
             continue
@@ -167,11 +181,12 @@ def _images(model, source, strength, shear):
     return images
 
 
-def _image_data(model, source, strength, shear, order=2):
+def _image_data(model, source, strength, shear, order=2, convergence=0.0):
     gamma1, gamma2 = shear
-    A = np.array([[1-gamma1, -gamma2], [-gamma2, 1+gamma1]])
+    A = np.array([[1-convergence-gamma1, -gamma2],
+                  [-gamma2, 1-convergence+gamma1]])
     data = []
-    for x in _images(model, source, strength, shear):
+    for x in _images(model, source, strength, shear, convergence):
         r = np.linalg.norm(x)
         er = x/r
         et = np.array([-er[1], er[0]])
@@ -213,7 +228,7 @@ def _differentiate(terms, coordinate):
     return result
 
 
-def _center_coefficients(source, strength, shear, order):
+def _center_coefficients(source, strength, shear, order, convergence=0.0):
     """Coefficients of w^-1,...,w^-K from the SIS conical center.
 
     D=A11*d11+2*A12*d12+A22*d22. The m-th coefficient is
@@ -221,7 +236,8 @@ def _center_coefficients(source, strength, shear, order):
     """
     y = np.asarray(source, dtype=float)
     gamma1, gamma2 = shear
-    A = np.array([[1-gamma1, -gamma2], [-gamma2, 1+gamma1]])
+    A = np.array([[1-convergence-gamma1, -gamma2],
+                  [-gamma2, 1-convergence+gamma1]])
     terms = {(0, 0, Fraction(3, 2)): 1}
     z = complex(strength**2-y@y, -1e-14)
     coefficients = []
@@ -237,9 +253,9 @@ def _center_coefficients(source, strength, shear, order):
     return coefficients
 
 
-def amplification(w, model, source, strength=1.0, shear=(0.0, 0.0), order=6,
-                  include_sis_center=True):
-    """Amplification through order zero to six beyond geometric optics.
+def amplification(w, model, source, strength=1.0, shear=(0.0, 0.0), order=10,
+                  include_sis_center=True, convergence=0.0):
+    """Amplification through order zero to ten beyond geometric optics.
 
     Frequencies w>0. Ordinary-image terms are invalid at caustics; the SIS
     center series is invalid at |y|=b. See REPORT.md for uniform limits.
@@ -248,7 +264,7 @@ def amplification(w, model, source, strength=1.0, shear=(0.0, 0.0), order=6,
     w = np.asarray(w, dtype=float)
     if np.any(w <= 0):
         raise ValueError('w must be positive')
-    data = _image_data(model, source, strength, shear, order)
+    data = _image_data(model, source, strength, shear, order, convergence)
     if not data:
         raise ValueError('No ordinary images found')
     answer = np.zeros_like(w, dtype=complex)
@@ -259,6 +275,6 @@ def amplification(w, model, source, strength=1.0, shear=(0.0, 0.0), order=6,
                    * np.exp(1j*w*(image['tau']-reference)-0.5j*pi*image['morse']))
     if model == 'SIS' and order >= 1 and include_sis_center:
         center = sum(c/w**(m+1) for m, c in enumerate(
-            _center_coefficients(source, strength, shear, order)))
+            _center_coefficients(source, strength, shear, order, convergence)))
         answer += np.exp(1j*w*(source@source/2-reference))*center
     return answer

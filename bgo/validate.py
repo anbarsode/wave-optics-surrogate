@@ -52,6 +52,22 @@ def main():
                                 shear=(rotated_shear[0, 0], rotated_shear[0, 1]))
         assert np.max(abs(original-rotated)) < 1e-8
 
+    # Exact mass-sheet coordinate transformation checks both ordinary images
+    # and the full ten-term SIS center series for off-axis sources and shear.
+    vector = np.array([0.26, 0.07])
+    strength = 1.1
+    for scale in (0.6, 0.82, 1.2):
+        for model in ('PM', 'SIS'):
+            for order in (0, 1, 6, 8, 10):
+                original = amplification(np.array([25., 60.]), model, vector,
+                    strength=strength, shear=(0.03, 0.025), convergence=1-scale,
+                    order=order)
+                transformed = amplification(np.array([25., 60.]), model,
+                    vector/np.sqrt(scale),
+                    strength=strength if model == 'PM' else strength/np.sqrt(scale),
+                    shear=(0.03/scale, 0.025/scale), order=order)/scale
+                assert np.max(abs(original-transformed)/np.maximum(abs(original),1e-12)) < 1e-8
+
     # Exact GLoW routines check orders through six in their asymptotic regime.
     w = np.array([20., 40., 80.])
     for model, solver in (('PM', freq_domain_c.Fw_AnalyticPointLens_C(0.3, {'parallel': False})),
