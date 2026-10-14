@@ -5,3 +5,5 @@ WRITING_STYLE.md
 *.jpg
 *.json
 __pycache__
+*.npz
+*.csv

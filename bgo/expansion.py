@@ -278,3 +278,32 @@ def amplification(w, model, source, strength=1.0, shear=(0.0, 0.0), order=10,
             _center_coefficients(source, strength, shear, order, convergence)))
         answer += np.exp(1j*w*(source@source/2-reference))*center
     return answer
+
+
+def isolated_parts(w, model, y, order=2):
+    """Return the separate image corrections and SIS center contribution.
+
+    For each ordinary image, the returned correction is
+
+        sqrt(|mu_i|) * sum_{k=1}^order B_ik (i/w)^k.
+
+    The image's arrival-time and Morse factor are *not* included. The center
+    contribution includes its own phase relative to the earliest image. This
+    follows the stationary-phase expansion derived in ``REPORT.md`` and
+    Takahashi (2004), Appendix B, https://arxiv.org/abs/astro-ph/0402165.
+    The terms are asymptotic and must be switched off at low frequency.
+    """
+    w = np.asarray(w, dtype=float)
+    source = np.array([y, 0.0])
+    images = _image_data(model, source, 1.0, (0.0, 0.0), order)
+    corrections = np.array([
+        sum((1j/w)**k*image['coefficients'][k] for k in range(1, order+1))
+        /np.sqrt(abs(image['determinant']))
+        for image in images
+    ])
+    center = np.zeros_like(w, dtype=complex)
+    if model == 'SIS':
+        coefficients = _center_coefficients(source, 1.0, (0.0, 0.0), order)
+        center = np.exp(1j*w*(y*y/2-images[0]['tau'])) * sum(
+            coefficient/w**(k+1) for k, coefficient in enumerate(coefficients))
+    return corrections, center
