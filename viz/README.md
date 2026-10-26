@@ -67,8 +67,9 @@ also reports \(\theta_E^{\rm MI}\): the angular radius of a source-plane
 disk with the same area as the mapped negative-parity grid cells. Each cell is first mapped through
 the lens equation and its four-corner polygon area is summed; equivalently this applies
 \(dA_y=|\det A|dA_x\), rather than using the lens-plane area. If the negative-parity region reaches
-the calculation boundary, or contains the point-mass singularity and maps without bound, the
-displayed radius is \(\infty\).
+the calculation boundary, the displayed radius is \(\infty\). A central point-mass singularity
+alone does not trigger this flag: the reported value is the finite source-plane area sampled by
+the displayed grid cells.
 
 The BGO solver is the stationary-phase expansion documented in `bgo/REPORT.md` and follows
 [Takahashi (2004), Appendix B](https://arxiv.org/abs/astro-ph/0402165). GLoW supplies the analytic
@@ -79,7 +80,7 @@ supplies the PM positive-parity external-field source-derivative series, the SIS
 integral with numerical angular quadrature, and Uddeepta's raw/repaired PM contour calculations.
 
 The time panel displays the direct non-negative delay density \(F(t)\): GLoW's contour response
-or Uddeepta's raw Ulmer--Goodman-style contour histogram. The latter contains the expected
+divided by \(2\pi\), or Uddeepta's raw Ulmer--Goodman-style contour histogram. The latter contains the expected
 steps, logarithmic divergences, and smooth pieces between them. These are the quantities used
 internally to obtain \(F(w)\); the visualizer does not construct an inverse Fourier transform of
 \(F(w)\). The time-panel menu can use a linear or logarithmic time axis.

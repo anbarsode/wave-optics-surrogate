@@ -12,6 +12,7 @@ Then open http://127.0.0.1:8765 in a browser.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -22,6 +23,7 @@ from viz.engine import calculate
 
 
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
+STATE_ROOT = Path(__file__).resolve().parent / ".states"
 MIME_TYPES = {
     ".html": "text/html; charset=utf-8",
     ".css": "text/css; charset=utf-8",
@@ -63,13 +65,21 @@ class LensingHandler(BaseHTTPRequestHandler):
         self._send_bytes(target.read_bytes(), MIME_TYPES.get(target.suffix, "application/octet-stream"))
 
     def do_POST(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
-        if urlparse(self.path).path != "/api/calculate":
-            self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
-            return
         try:
             length = int(self.headers.get("Content-Length", "0"))
             request = json.loads(self.rfile.read(length) or b"{}")
-            self._send_json(calculate(request))
+            endpoint = urlparse(self.path).path
+            if endpoint == "/api/calculate":
+                self._send_json(calculate(request))
+            elif endpoint == "/api/states":
+                if not isinstance(request, dict):
+                    raise ValueError("A visualizer state must be a JSON object")
+                STATE_ROOT.mkdir(exist_ok=True)
+                filename = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S-%f") + ".json"
+                (STATE_ROOT / filename).write_text(json.dumps(request, indent=2, sort_keys=True) + "\n")
+                self._send_json({"filename": filename})
+            else:
+                self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
         except Exception as error:
             self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
 

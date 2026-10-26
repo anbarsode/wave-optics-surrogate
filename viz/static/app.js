@@ -49,7 +49,7 @@ const PARAMETER_CONTROLS = [
 const PANEL_CONTROLS = {
   sky: {id: "sky_resolution", label: "GRID", min: 0, max: 15, step: 1, value: 6, tip: "Lens-plane samples per side, with two geometrically spaced choices between each power of two from 32 to 1024.", transform: fineGridSize, format: v => `${fineGridSize(v)}`},
   frequency: {id: "frequency_samples", label: "POINTS", min: 0, max: 15, step: 1, value: 6, tip: "Frequency samples, with two geometrically spaced choices between each power of two from 32 to 1024.", transform: fineGridSize, format: v => `${fineGridSize(v)}`},
-  time: {id: "time_samples", label: "POINTS", min: 0, max: 15, step: 1, value: 6, tip: "Shown points from the solver's direct delay histogram or contour response, with two geometrically spaced choices between each power of two.", transform: fineGridSize, format: v => `${fineGridSize(v)}`},
+  time: {id: "time_samples", label: "POINTS", min: 0, max: 15, step: 1, value: 12, tip: "Shown points from the solver's direct delay histogram or contour response, with two geometrically spaced choices between each power of two.", transform: fineGridSize, format: v => `${fineGridSize(v)}`},
 };
 
 function fineGridSize(step) { return Math.round(32 * 2 ** (Number(step) / 3)); }
@@ -300,6 +300,94 @@ function buildRequest() {
     solverSettings[definition.id] = definition.transform ? definition.transform(raw) : raw;
   }
   return {model: state.model, solvers: [...state.solvers], parameters, solver_settings: solverSettings};
+}
+
+function savedState() {
+  return {
+    format: "gravitational-lensing-state-v1",
+    model: state.model,
+    solvers: [...state.solvers],
+    values: {...state.values},
+    panels: {...state.panels},
+    sky_layers: [...state.skyLayers],
+    subpanels: Object.fromEntries(Object.entries(state.subpanels).map(([name, values]) => [name, [...values]])),
+    time_axis: state.timeAxis,
+    auto_refresh: {
+      mode: document.getElementById("refresh-delay").value,
+      seconds: Number(document.getElementById("timed-delay").value),
+    },
+    grid: {
+      column_split: getComputedStyle(document.documentElement).getPropertyValue("--column-split").trim(),
+      row_sizes: [...state.rowSizes],
+    },
+  };
+}
+
+async function exportState() {
+  try {
+    const response = await fetch("/api/states", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(savedState()),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Could not export this state");
+    setStatus("ready", `Saved viz/.states/${result.filename}`);
+  } catch (error) {
+    setStatus("error", String(error.message || error));
+  }
+}
+
+function applySavedState(saved) {
+  if (!saved || saved.format !== "gravitational-lensing-state-v1") {
+    throw new Error("This is not a Gravitational Lensing state file");
+  }
+  if (MODEL_OPTIONS.some(([id]) => id === saved.model)) state.model = saved.model;
+  if (Array.isArray(saved.solvers) && saved.solvers.length) state.solvers = new Set(saved.solvers);
+  if (saved.values && typeof saved.values === "object") state.values = {...saved.values};
+  if (saved.panels && typeof saved.panels === "object") {
+    for (const [name] of PANEL_TYPES) {
+      if (Number.isFinite(saved.panels[name])) state.panels[name] = Math.max(0, Math.min(2, saved.panels[name]));
+    }
+  }
+  if (Array.isArray(saved.sky_layers)) state.skyLayers = new Set(saved.sky_layers);
+  if (saved.subpanels && typeof saved.subpanels === "object") {
+    for (const [name] of Object.entries(SUBPANELS)) {
+      if (Array.isArray(saved.subpanels[name])) state.subpanels[name] = new Set(saved.subpanels[name]);
+    }
+  }
+  if (saved.time_axis === "linear" || saved.time_axis === "log") state.timeAxis = saved.time_axis;
+  const refreshSettings = saved.auto_refresh || {};
+  document.getElementById("refresh-delay").value = ["off", "instant", "timed"].includes(refreshSettings.mode) ? refreshSettings.mode : "instant";
+  document.getElementById("timed-delay").value = Math.max(.1, Math.min(3, Number(refreshSettings.seconds) || .4));
+  document.getElementById("timed-delay-wrap").classList.toggle("hidden", document.getElementById("refresh-delay").value !== "timed");
+  if (saved.grid?.column_split) document.documentElement.style.setProperty("--column-split", saved.grid.column_split);
+  state.gridRows = 0;
+  buildControls();
+  buildModelOptions();
+  buildSolverOptions();
+  buildPanelOptions();
+  renderPanels();
+  if (Array.isArray(saved.grid?.row_sizes) && saved.grid.row_sizes.length === state.gridRows) {
+    state.rowSizes = saved.grid.row_sizes;
+    document.getElementById("panel-grid").style.gridTemplateRows = state.rowSizes.map(size => `minmax(0, ${size}fr)`).join(" ");
+    document.querySelectorAll(".dynamic-row-splitter").forEach(positionRowSplitter);
+  }
+  refresh();
+}
+
+function importState(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      applySavedState(JSON.parse(reader.result));
+      setStatus("ready", `Loaded ${file.name}`);
+    } catch (error) {
+      setStatus("error", String(error.message || error));
+    }
+  };
+  reader.readAsText(file);
 }
 
 function layoutControlGroup(containerId) {
@@ -634,11 +722,16 @@ class CanvasPlot {
     if (this.type === "frequency") return {x0: Math.log10(this.data.frequency_hz[0]), x1: Math.log10(this.data.frequency_hz.at(-1)), y0: 0, y1: 1};
     if (this.type === "complex") return rangeForComplex(this.data);
     const delay = directDelayDomain(this.data)?.[2] || [0, 1];
+    // The interesting steps and saddle logarithms occur near the geometric-image
+    // delays.  Showing the full long-time tail by default made that structure a
+    // nearly invisible sliver at the left edge of the panel.
+    const largestImageDelay = Math.max(.25, ...this.data.images.map(image => image.delay_dimensionless));
+    const focusedEnd = Math.min(delay.at(-1), Math.max(4, 4*largestImageDelay));
     if (state.timeAxis === "log") {
       const positive = delay.filter(value => value > 0);
-      return {x0: Math.log10(positive[0] || 1e-6), x1: Math.log10(positive.at(-1) || 1), y0: 0, y1: 1};
+      return {x0: Math.log10(positive[0] || 1e-6), x1: Math.log10(Math.max(focusedEnd, positive[0] || 1e-6)), y0: 0, y1: 1};
     }
-    return {x0: delay[0], x1: delay.at(-1), y0: 0, y1: 1};
+    return {x0: delay[0], x1: focusedEnd, y0: 0, y1: 1};
   }
 
   reset() { this.view = this.defaultView(); this.draw(); }
@@ -1047,6 +1140,12 @@ function makeSplitter(id, direction) {
 }
 
 document.getElementById("refresh-button").addEventListener("click", refresh);
+document.getElementById("export-state").addEventListener("click", exportState);
+document.getElementById("import-state").addEventListener("click", () => document.getElementById("import-state-file").click());
+document.getElementById("import-state-file").addEventListener("change", event => {
+  importState(event.target.files[0]);
+  event.target.value = "";
+});
 document.getElementById("refresh-delay").addEventListener("change", event => {
   document.getElementById("timed-delay-wrap").classList.toggle("hidden", event.target.value !== "timed");
   scheduleRefresh();

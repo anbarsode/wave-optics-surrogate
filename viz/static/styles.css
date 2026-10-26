@@ -65,6 +65,21 @@ button, select { color: inherit; }
   pointer-events: none;
 }
 
+.title-actions { display: flex; gap: 4px; margin-left: 2px; pointer-events: auto; }
+.title-action {
+  width: 21px;
+  height: 21px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--line-bright);
+  background: #10212c;
+  color: var(--muted);
+  cursor: pointer;
+}
+.title-action svg { width: 10px; height: 10px; fill: currentColor; }
+.title-action:hover { color: var(--cyan); border-color: var(--cyan); }
+
 .brand-mark {
   width: 19px;
   height: 19px;

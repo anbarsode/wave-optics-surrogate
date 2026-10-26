@@ -183,8 +183,36 @@ def _segments(axis: np.ndarray, values: np.ndarray, levels: list[float]) -> list
     maker, answer = contour_generator(x=axis, y=axis, z=values), []
     for level in levels:
         for line in maker.lines(level):
-            if len(line) > 1: answer.append({"level": float(level), "points": np.asarray(line)[::2].tolist()})
+            if len(line) > 1: answer.append({"level": float(level), "points": np.asarray(line).tolist()})
     return answer
+
+
+def _deflection(profile: Profile, points: np.ndarray) -> np.ndarray:
+    """Evaluate the deflection at arbitrary points without nearest-grid sampling."""
+    step = 2e-5*max(1., profile.maximum_radius)
+    x1, x2 = points[:, 0], points[:, 1]
+    alpha1 = (profile.psi(x1+step, x2)-profile.psi(x1-step, x2))/(2*step)
+    alpha2 = (profile.psi(x1, x2+step)-profile.psi(x1, x2-step))/(2*step)
+    return np.column_stack((alpha1, alpha2))
+
+
+def _critical_curves(profile: Profile, span: float, resolution: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Trace smooth critical curves and map each point directly to the source plane."""
+    curve_resolution = max(256, min(512, 2*resolution))
+    axis = np.linspace(-span, span, curve_resolution)
+    x1, x2 = np.meshgrid(axis, axis)
+    spacing = axis[1]-axis[0]
+    psi = profile.psi(x1, x2)
+    gradient2, gradient1 = np.gradient(psi, spacing, spacing, edge_order=2)
+    h11 = np.gradient(gradient1, spacing, axis=1, edge_order=2)
+    h22 = np.gradient(gradient2, spacing, axis=0, edge_order=2)
+    h12 = .5*(np.gradient(gradient1, spacing, axis=0, edge_order=2)+np.gradient(gradient2, spacing, axis=1, edge_order=2))
+    critical = _segments(axis, (1-h11)*(1-h22)-h12**2, [0.])
+    caustic = []
+    for segment in critical:
+        points = np.asarray(segment["points"])
+        caustic.append({"level": 0., "points": (points-_deflection(profile, points)).tolist()})
+    return critical, caustic
 
 
 def _field(profile: Profile, settings: Settings, images: list[dict[str, Any]], resolution: int) -> dict[str, Any]:
@@ -195,10 +223,8 @@ def _field(profile: Profile, settings: Settings, images: list[dict[str, Any]], r
     sy,sx = x2-gy, x1-gx; determinant = (1-h11)*(1-h22)-h12**2
     magnification = np.divide(1.,determinant,out=np.zeros_like(determinant),where=abs(determinant)>1e-10)
     delay = .5*((x1-settings.source[0])**2+(x2-settings.source[1])**2)-psi; reference = images[0]["tau"]
-    residual = np.hypot(settings.source[0]-sx, settings.source[1]-sy); critical = _segments(axis, determinant, [0.]); caustic=[]
-    for segment in critical:
-        points=np.asarray(segment["points"]); ix=np.clip(np.searchsorted(axis,points[:,0]),0,resolution-1); iy=np.clip(np.searchsorted(axis,points[:,1]),0,resolution-1)
-        caustic.append({"level":0.,"points":np.column_stack((points[:,0]-gx[iy,ix],points[:,1]-gy[iy,ix])).tolist()})
+    residual = np.hypot(settings.source[0]-sx, settings.source[1]-sy)
+    critical, caustic = _critical_curves(profile, span, resolution)
     negative=determinant<0; stride=max(3,resolution//22); cells=[]
     for row in range(0,resolution-stride,stride):
         for column in range(0,resolution-stride,stride):
@@ -217,12 +243,11 @@ def _field(profile: Profile, settings: Settings, images: list[dict[str, Any]], r
                                 [sx[row+1,column+1], sy[row+1,column+1]], [sx[row+1,column], sy[row+1,column]]])
             source_area += .5*abs(np.dot(polygon[:,0], np.roll(polygon[:,1], -1)) - np.dot(polygon[:,1], np.roll(polygon[:,0], -1)))
     maximum=max((image["tau"]-reference for image in images),default=.25)
-    # A PM negative-parity region includes the logarithmic central singularity.
-    # Its source-plane image extends without bound, independent of the finite
-    # lens-plane plotting box.  For regular profiles, an outer-grid crossing
-    # is the numerical signal that the mapped region is unbounded here.
-    edge=bool(np.any(negative[[0,-1],:]) or np.any(negative[:,[0,-1]]) or
-              (settings.model == "PM" and np.any(negative)))
+    # Report infinity only when the sampled negative-parity component reaches the
+    # displayed boundary. A point-mass negative image approaches its singular
+    # centre, but that alone must not turn the finite, sampled source-plane area
+    # requested by the visualizer into infinity.
+    edge=bool(np.any(negative[[0,-1],:]) or np.any(negative[:,[0,-1]]))
     return {"extent":[-span,span,-span,span],"resolution":resolution,"delay":_json(delay-reference),
             "log_magnification":_json(np.clip(np.log10(abs(magnification)+1e-10),-1,3)),"negative":negative.astype(np.uint8).ravel().tolist(),
             "residual":_json(np.clip(np.log10(residual+1e-3),-3,0)),"critical":critical,"caustic":caustic,"mapped_cells":cells,
@@ -291,7 +316,10 @@ def _glow(settings: Settings,w: np.ndarray,display_points: int,accuracy: float,i
         transform=freq_domain_c.Fw_FFT_C(response,{"wmin":float(min(w)),"wmax":float(1.2*max(w)),"eval_mode":"exact","parallel":False,"N_above_discard":7})
         values.append(np.asarray(transform(w),complex)); responses.append(response)
     delta=np.linalg.norm(values[-1]-values[-2])/max(np.linalg.norm(values[-1]),1e-20); time,response=responses[-1].t_grid,responses[-1].It_grid
-    take=np.unique(np.linspace(0,len(time)-1,display_points).astype(int)); return values[-1],(time[take],response[take]),f"GLoW FFT, Nt={levels[-1]} (Δ={delta:.2g})"
+    # GLoW calls this quantity I(t).  The conventional Ulmer--Goodman
+    # delay density is F(t)=I(t)/(2 pi), matching the contour solver below.
+    take=np.unique(np.linspace(0,len(time)-1,display_points).astype(int))
+    return values[-1], (time[take], response[take]/(2*np.pi)), f"GLoW FFT, Nt={levels[-1]} (Δ={delta:.2g})"
 
 
 def _bgo(settings: Settings,w: np.ndarray,order: int,images: list[dict[str,Any]]) -> tuple[np.ndarray,str]:
@@ -380,20 +408,23 @@ def _pm_field_series(settings: Settings, w: np.ndarray) -> np.ndarray:
     return np.asarray(result)
 
 
-def _uddeepta_curve(settings: Settings, w: np.ndarray, repaired: bool) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray]]:
+def _uddeepta_curve(settings: Settings, w: np.ndarray, repaired: bool, display_points: int) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray]]:
     """Uddeepta's ab_initio contour calculation and its direct non-negative delay density.
 
-    The displayed density is the original contour histogram.  Peak repair affects only the
-    frequency-domain reconstruction, never the physical histogram shown in the time panel.
+    The repaired method replaces the unresolved saddle-bin peak by the analytic logarithmic
+    saddle contribution, matched continuously to the contour response on either side. This is
+    the Ulmer--Goodman time-domain structure, not a Fourier transform of F(w).
     """
     from scipy.interpolate import interp1d
     from ab_initio.helper_functions import SLML, Ftilde_contour, ReconstructPeak, ampFac
     lens=SLML(k=settings.convergence,g1=settings.shear,mratio=1.,y1=settings.source[0],y2=settings.source[1])
-    delays,response=Ftilde_contour(lens,100,np.pi/60,dx1=.06,dx2=.06); time=np.linspace(0,100,32768)
+    delays,response=Ftilde_contour(lens,100,np.pi/(20*3),dx1=.06,dx2=.06)
+    time=np.linspace(0,100,32768)
     signal=interp1d(delays,response,fill_value="extrapolate")(time)
     if repaired: signal=ReconstructPeak(lens,time,signal).get_peak_reconstructed_Ft()
     frequency,value=ampFac(time,signal)
-    return interp1d(frequency,value,fill_value="extrapolate")(w), (delays,response)
+    take=np.unique(np.linspace(0,len(time)-1,display_points).astype(int))
+    return interp1d(frequency,value,fill_value="extrapolate")(w), (time[take], signal[take])
 
 
 def _cosmology(settings: Settings,field: dict[str,Any]) -> dict[str,Any]:
@@ -416,9 +447,9 @@ def calculate(request: dict[str,Any]) -> dict[str,Any]:
             elif name=="analytic": curves[name]=_curve(_analytic(settings,w),"Analytic / semi-analytic")
             elif name=="series": curves[name]=_curve(_pm_field_series(settings,w),"PM field series")
             elif name=="uddeepta_raw":
-                value,delay=_uddeepta_curve(settings,w,False); curves[name]=_curve(value,"Uddeepta contour",delay)
+                value,delay=_uddeepta_curve(settings,w,False,times); curves[name]=_curve(value,"Uddeepta contour",delay)
             elif name=="uddeepta_repaired":
-                value,delay=_uddeepta_curve(settings,w,True); curves[name]=_curve(value,"Uddeepta peak repair",delay)
+                value,delay=_uddeepta_curve(settings,w,True,times); curves[name]=_curve(value,"Uddeepta peak repair",delay)
         except Exception as error: messages.append(f"{name}: {error}")
     reference=images[0]["tau"]; names=("minimum","saddle","maximum"); rows=[]
     for index,item in enumerate(images,1):

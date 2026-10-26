@@ -52,10 +52,11 @@ class EngineTests(unittest.TestCase):
         self.assertGreater(field["multiple_image_radius"], 0)
         self.assertGreater(result["cosmology"]["theta_mi_mas"], 0)
 
-    def test_point_mass_multiple_image_radius_is_unbounded(self):
+    def test_point_mass_multiple_image_radius_uses_the_sampled_source_plane_area(self):
         result = calculate(request("PM"))
-        self.assertTrue(result["field"]["multiple_image_infinite"])
-        self.assertTrue(result["cosmology"]["theta_mi_infinite"])
+        self.assertFalse(result["field"]["multiple_image_infinite"])
+        self.assertGreater(result["field"]["multiple_image_radius"], 0)
+        self.assertFalse(result["cosmology"]["theta_mi_infinite"])
 
     def test_glow_returns_its_direct_nonnegative_delay_density(self):
         input_request = request("PM")
