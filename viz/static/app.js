@@ -5,9 +5,24 @@ const BGO_MODELS = new Set(["PM", "SIS"]);
 function availableSolvers() {
   const answer = [["bgo", BGO_MODELS.has(state.model) ? "BGO series" : "Geometric optics (BGO K=0)", BGO_MODELS.has(state.model) ? "The BGO expansion. Order zero is the geometric-optics result." : "The order-zero stationary-image sum for this profile."]];
   if (GLOW_MODELS.has(state.model)) answer.unshift(["glow", "GLoW reference", "GLoW's numerical time-domain response and its own regularised FFT."]);
-  if (state.model === "PM" || state.model === "SIS") answer.push(["analytic", "Analytic helper solution", "Closed point-mass or SIS helper-function solution for an isolated circular lens."]);
+  if ((state.model === "PM" && !(state.values.shear || 0)) || state.model === "SIS") answer.push(["analytic", "Analytic / semi-analytic", "Point-mass mass-sheet solution, or the SIS radial integral with angular quadrature from ab_initio."]);
+  if (state.model === "PM" && Math.abs(state.values.shear || 0) > 0 && 1 - (state.values.convergence || 0) > Math.abs(state.values.shear || 0)) {
+    answer.push(["series", "PM field series", "The source-derivative series from ab_initio for a point mass in a positive-parity external field."]);
+  }
+  if (state.model === "PM") {
+    answer.push(["uddeepta_raw", "Uddeepta contour", "Ulmer–Goodman's direct point-mass F(t): the contour histogram with its steps and logarithmic peaks, without saddle-peak repair."]);
+    answer.push(["uddeepta_repaired", "Uddeepta peak repair", "The same direct Ulmer–Goodman F(t), with peak repair used only for its F(w) reconstruction."]);
+  }
   return answer;
 }
+
+function externalFieldActive() { return (state.values.convergence || 0) > 0 || Math.abs(state.values.shear || 0) > 0; }
+
+const MODEL_OPTIONS = [
+  ["PM", "Point mass"], ["SIS", "Singular isothermal sphere"], ["SIE", "Singular isothermal ellipsoid"],
+  ["CIS", "Cored isothermal sphere"], ["NFW", "Navarro–Frenk–White"], ["eNFW", "Elliptical NFW"],
+  ["EPL", "Elliptical power law"], ["Hernquist", "Hernquist"],
+];
 
 const SOLVER_CONTROLS = [
   {id: "bgo_order", label: "BGO ORDER", min: 0, max: 10, step: 1, value: 0, unit: "", tip: "Order zero is geometric optics. Higher orders add series corrections whenever BGO supports them."},
@@ -15,10 +30,10 @@ const SOLVER_CONTROLS = [
 ];
 
 const PARAMETER_CONTROLS = [
-  {id: "impact_x", label: "IMPACT y₁", min: -2.5, max: 2.5, step: .01, value: .5, unit: "", tip: "Horizontal source position. It can be set independently of y₂."},
-  {id: "impact_y", label: "IMPACT y₂", min: -2.5, max: 2.5, step: .01, value: 0, unit: "", tip: "Vertical source position. It can be set independently of y₁."},
-  {id: "convergence", label: "CONVERGENCE κ", min: 0, max: .75, step: .01, value: 0, unit: "", tip: "Uniform positive surface density from the external environment. Negative convergence is an underdensity, not a lens mass."},
-  {id: "shear", label: "AXIS SHEAR γ", min: 0, max: .75, step: .01, value: 0, unit: "", tip: "Tidal stretch aligned with the horizontal and vertical axes. The range keeps the far-field mapping physical."},
+  {id: "impact_x", label: "IMPACT y₁", min: -2, max: 2, step: .01, value: .5, unit: "", tip: "Horizontal dimensionless source position. It is independent of y₂; both signs are physically equivalent after reflection."},
+  {id: "impact_y", label: "IMPACT y₂", min: -2, max: 2, step: .01, value: 0, unit: "", tip: "Vertical dimensionless source position. It is independent of y₁; both signs are physically equivalent after reflection."},
+  {id: "convergence", label: "CONVERGENCE κ", min: -1, max: .95, step: .01, value: 0, unit: "", tip: "External convergence relative to a reference line of sight. Negative values describe an underdensity; positive values describe extra projected mass. Together with shear the app enforces 1 − κ > |γ|."},
+  {id: "shear", label: "AXIS SHEAR γ", min: -.95, max: .95, step: .01, value: 0, unit: "", tip: "Tidal stretch aligned with the horizontal and vertical axes. Its sign swaps the stretched axis. The app enforces κ + |γ| < 1, so the far field remains physical."},
   {id: "z_lens", label: "LENS REDSHIFT", min: .01, max: 3, step: .01, value: .5, unit: "", tip: "Cosmological redshift of the lens. Planck18 supplies the distances."},
   {id: "z_source", label: "SOURCE REDSHIFT", min: .05, max: 8, step: .05, value: 1.5, unit: "", tip: "Cosmological redshift of the source; it must exceed the lens redshift."},
   {id: "mass", label: "LENS MASS M_Lz", min: 0, max: 7, step: .05, value: 2, unit: "", tip: "Redshifted total lens mass in solar masses. It fixes the profile's angular scale and converts f to w.", transform: v => 10 ** v, format: v => `${formatNumber(10 ** v)} M☉`},
@@ -32,10 +47,12 @@ const PARAMETER_CONTROLS = [
 ];
 
 const PANEL_CONTROLS = {
-  sky: {id: "sky_resolution", label: "GRID", min: 5, max: 10, step: 1, value: 7, tip: "Lens-plane samples per side: powers of two from 32 to 1024.", transform: v => 2 ** v, format: v => `${2 ** v}`},
-  frequency: {id: "frequency_samples", label: "POINTS", min: 5, max: 10, step: 1, value: 7, tip: "Frequency samples: powers of two from 32 to 1024.", transform: v => 2 ** v, format: v => `${2 ** v}`},
-  time: {id: "time_samples", label: "POINTS", min: 5, max: 10, step: 1, value: 7, tip: "Displayed samples of the solver's own time response: powers of two from 32 to 1024.", transform: v => 2 ** v, format: v => `${2 ** v}`},
+  sky: {id: "sky_resolution", label: "GRID", min: 0, max: 15, step: 1, value: 6, tip: "Lens-plane samples per side, with two geometrically spaced choices between each power of two from 32 to 1024.", transform: fineGridSize, format: v => `${fineGridSize(v)}`},
+  frequency: {id: "frequency_samples", label: "POINTS", min: 0, max: 15, step: 1, value: 6, tip: "Frequency samples, with two geometrically spaced choices between each power of two from 32 to 1024.", transform: fineGridSize, format: v => `${fineGridSize(v)}`},
+  time: {id: "time_samples", label: "POINTS", min: 0, max: 15, step: 1, value: 6, tip: "Shown points from the solver's direct delay histogram or contour response, with two geometrically spaced choices between each power of two.", transform: fineGridSize, format: v => `${fineGridSize(v)}`},
 };
+
+function fineGridSize(step) { return Math.round(32 * 2 ** (Number(step) / 3)); }
 
 const PANEL_TYPES = [
   ["sky", "Sky view"],
@@ -55,11 +72,21 @@ const SKY_LAYERS = [
   ["residual", "|y − x + α(x)|"],
 ];
 
+const SUBPANELS = {
+  frequency: [["amplitude", "|F(w)|"], ["phase", "Unwrapped phase"], ["amplitudeError", "Relative amplitude error"], ["phaseError", "Phase error"]],
+  time: [["response", "F(t) delay density"], ["error", "Delay-density error"]],
+  complex: [["value", "F(w)"], ["error", "Complex error"]],
+};
+
 const STYLE = [
   {color: "#39d3d6", dash: []},
   {color: "#ff7d6e", dash: [8, 4]},
   {color: "#f2c14e", dash: [2, 4]},
   {color: "#46a8ff", dash: [11, 3, 2, 3]},
+  {color: "#66d18f", dash: [4, 3]},
+  {color: "#e879f9", dash: [10, 3, 2, 3, 2, 3]},
+  {color: "#f59e0b", dash: [1, 3]},
+  {color: "#a5b4fc", dash: [12, 4]},
 ];
 
 const state = {
@@ -68,6 +95,8 @@ const state = {
   values: {},
   panels: {sky: 1, frequency: 1, time: 1, complex: 1},
   skyLayers: new Set(["critical", "source", "delayColors", "delayContours"]),
+  subpanels: {frequency: new Set(["amplitude", "phase"]), time: new Set(["response"]), complex: new Set(["value"])},
+  timeAxis: "linear",
   data: null,
   plots: [],
   autoTimer: null,
@@ -78,6 +107,8 @@ const state = {
 };
 
 function formatNumber(value) {
+  value = Number(value);
+  if (!Number.isFinite(value)) return "—";
   if (Math.abs(value) >= 1e4 || (Math.abs(value) > 0 && Math.abs(value) < 0.01)) return value.toExponential(1);
   if (Math.abs(value) >= 100) return value.toFixed(0);
   if (Math.abs(value) >= 10) return value.toFixed(1);
@@ -87,6 +118,25 @@ function formatNumber(value) {
 function formatFrequency(value) {
   if (value >= 1e3) return `${formatNumber(value / 1e3)} kHz`;
   return `${formatNumber(value)} Hz`;
+}
+
+function sliderLimits(definition) {
+  let min = definition.min;
+  let max = definition.max;
+  const convergence = state.values.convergence || 0;
+  if (definition.id === "shear") {
+    max = Math.max(0, .99 - convergence);
+    min = -max;
+  } else if (definition.id === "z_lens") {
+    max = Math.min(max, (state.values.z_source || 1.5) - .01);
+  } else if (definition.id === "z_source") {
+    min = Math.max(min, (state.values.z_lens || .5) + .01);
+  } else if (definition.id === "f_min") {
+    max = Math.min(max, (state.values.f_max || 3) - .05);
+  } else if (definition.id === "f_max") {
+    min = Math.max(min, (state.values.f_min || 1) + .05);
+  }
+  return {min, max};
 }
 
 function createSlider(definition, order) {
@@ -99,11 +149,12 @@ function createSlider(definition, order) {
   label.dataset.tip = definition.tip;
   fragment.querySelector(".label-text").textContent = definition.label;
   input.id = `control-${definition.id}`;
-  input.min = definition.min;
-  input.max = definition.id === "shear" ? Math.max(0, .98 - (state.values.convergence || 0)) : definition.max;
+  const limits = sliderLimits(definition);
+  input.min = limits.min;
+  input.max = limits.max;
   input.step = definition.step;
   if (!(definition.id in state.values)) state.values[definition.id] = definition.value;
-  if (definition.id === "shear") state.values.shear = Math.min(state.values.shear, Number(input.max));
+  state.values[definition.id] = Math.max(Number(input.min), Math.min(Number(input.max), state.values[definition.id]));
   input.value = state.values[definition.id];
   input.setAttribute("aria-label", definition.label);
   input.title = definition.tip;
@@ -115,11 +166,19 @@ function createSlider(definition, order) {
   input.addEventListener("input", () => {
     state.values[definition.id] = Number(input.value);
     if (definition.id === "convergence") {
-      state.values.shear = Math.min(state.values.shear || 0, Math.max(0, .98 - state.values.convergence));
-      buildControls();
+      const shearLimit = Math.max(0, .99 - state.values.convergence);
+      state.values.shear = Math.max(-shearLimit, Math.min(shearLimit, state.values.shear || 0));
     }
     show();
     scheduleRefresh();
+  });
+  // Rebuilding controls during a range-input event removes the slider currently
+  // being dragged.  That made kappa/gamma changes appear to stop after one tick.
+  // Apply every numerical value immediately, then refresh dependent limits only
+  // when the drag is released.
+  input.addEventListener("change", () => {
+    if (["convergence", "shear", "z_lens", "z_source", "f_min", "f_max"].includes(definition.id)) buildControls();
+    if (definition.id === "convergence" || definition.id === "shear") buildSolverOptions();
   });
   return fragment;
 }
@@ -132,24 +191,36 @@ function buildControls() {
     .forEach((definition, index) => solverContainer.append(createSlider(definition, index)));
   const parameterContainer = document.getElementById("parameter-controls");
   parameterContainer.replaceChildren();
-  parameterContainer.append(createExternalControl());
   PARAMETER_CONTROLS.filter(definition => !definition.models || definition.models.includes(state.model))
-    .forEach((definition, index) => parameterContainer.append(createSlider(definition, index + 1)));
+    .forEach((definition, index) => parameterContainer.append(createSlider(definition, index)));
   requestAnimationFrame(layoutAllControls);
 }
 
-function createExternalControl() {
-  const label = document.createElement("label");
-  label.className = "external-control tip";
-  label.dataset.order = 0;
-  label.dataset.tip = "Turn on a positive external convergence and horizontal/vertical shear. The permitted range remains physically lens-like.";
-  label.innerHTML = "<span>EXTERNAL POTENTIAL</span>";
-  const input = document.createElement("input");
-  input.type = "checkbox";
-  input.checked = Boolean(state.values.use_external);
-  input.addEventListener("change", () => { state.values.use_external = input.checked; scheduleRefresh(); });
-  label.append(input);
-  return label;
+function buildModelOptions() {
+  const container = document.getElementById("model-options");
+  container.replaceChildren();
+  for (const [id, label] of MODEL_OPTIONS) {
+    const row = document.createElement("label");
+    const name = document.createElement("span");
+    name.textContent = label;
+    const radio = document.createElement("input");
+    radio.type = "radio";
+    radio.name = "lens-model";
+    radio.value = id;
+    radio.checked = state.model === id;
+    radio.addEventListener("change", () => {
+      if (!radio.checked) return;
+      state.model = id;
+      document.getElementById("model-summary").textContent = label;
+      buildControls();
+      buildSolverOptions();
+      scheduleRefresh();
+    });
+    row.append(name, radio);
+    container.append(row);
+  }
+  const current = MODEL_OPTIONS.find(([id]) => id === state.model);
+  document.getElementById("model-summary").textContent = current[1];
 }
 
 function buildSolverOptions() {
@@ -219,7 +290,6 @@ function buildRequest() {
     const raw = state.values[definition.id];
     parameters[definition.id] = definition.transform ? definition.transform(raw) : raw;
   }
-  parameters.use_external = Boolean(state.values.use_external);
   const solverSettings = {};
   for (const definition of SOLVER_CONTROLS) {
     const raw = state.values[definition.id];
@@ -236,14 +306,16 @@ function layoutControlGroup(containerId) {
   const container = document.getElementById(containerId);
   const more = document.getElementById(container.dataset.overflowMenu);
   const popover = more.querySelector(".overflow-popover");
-  const controls = [...container.querySelectorAll(".mini-control, .external-control"), ...popover.querySelectorAll(".mini-control, .external-control")]
+  const controls = [...container.querySelectorAll(".mini-control"), ...popover.querySelectorAll(".mini-control")]
     .sort((a, b) => Number(a.dataset.order) - Number(b.dataset.order));
   controls.forEach(control => container.append(control));
   more.classList.add("hidden");
-  const halfDefaultWidth = 85;
-  if (controls.length * halfDefaultWidth <= container.clientWidth) return;
+  // Keep labels and values legible before controls reach their strict 85 px
+  // minimum.  The remaining settings move to the hover menu on compact screens.
+  const minimumUsefulWidth = 120;
+  if (controls.length * minimumUsefulWidth <= container.clientWidth) return;
   more.classList.remove("hidden");
-  const available = Math.max(halfDefaultWidth, container.clientWidth - 4);
+  const available = Math.max(1, container.clientWidth - 4);
   const visible = Math.max(1, Math.floor(available / 170));
   controls.slice(visible).forEach(control => popover.append(control));
 }
@@ -354,6 +426,8 @@ function renderPanels() {
     const tools = panel.querySelector(".panel-tools");
     if (PANEL_CONTROLS[specification.type]) tools.prepend(createPanelControl(PANEL_CONTROLS[specification.type]));
     if (specification.type === "sky") tools.prepend(createLayerMenu());
+    else tools.prepend(createSubpanelMenu(specification.type));
+    if (specification.type === "time") tools.prepend(createTimeAxisMenu());
     grid.append(panel);
     const plot = new CanvasPlot(panel, specification.type);
     state.plots.push(plot);
@@ -364,6 +438,10 @@ function renderPanels() {
 
 function homeIcon() {
   return '<svg class="home-icon" aria-hidden="true" viewBox="0 0 576 512"><path d="M575.5 240.4 318.8 15.7c-17.5-15.5-44-15.5-61.5 0L.5 240.4C-13 252.2-1.6 274 16.4 274H64v174c0 35.3 28.7 64 64 64h96V368c0-17.7 14.3-32 32-32h64c17.7 0 32 14.3 32 32v144h96c35.3 0 64-28.7 64-64V274h47.6c18 0 29.4-21.8 16-33.6z"/></svg>';
+}
+
+function chevronIcon() {
+  return '<svg class="chevron-icon" aria-hidden="true" viewBox="0 0 448 512"><path d="M201.4 137.4c12.5-12.5 32.8-12.5 45.3 0l160 160c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L224 205.3 86.6 342.6c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3l160-160z"/></svg>';
 }
 
 function createPanelControl(definition) {
@@ -458,6 +536,53 @@ function createLayerMenu() {
   return menu;
 }
 
+function createSubpanelMenu(type) {
+  const menu = document.createElement("div");
+  menu.className = "hover-menu layer-menu";
+  menu.innerHTML = `<button type="button" title="Choose visible sub-panels">PANELS ${chevronIcon()}</button><div class="menu-popover checklist"></div>`;
+  const popover = menu.querySelector(".menu-popover");
+  for (const [id, label] of SUBPANELS[type]) {
+    const row = document.createElement("label");
+    const name = document.createElement("span"); name.textContent = label;
+    const checkbox = document.createElement("input"); checkbox.type = "checkbox"; checkbox.checked = state.subpanels[type].has(id);
+    checkbox.addEventListener("change", () => {
+      if (checkbox.checked) state.subpanels[type].add(id);
+      else if (state.subpanels[type].size > 1) state.subpanels[type].delete(id);
+      else checkbox.checked = true;
+      state.plots.filter(plot => plot.type === type).forEach(plot => plot.draw());
+    });
+    row.append(name, checkbox); popover.append(row);
+  }
+  return menu;
+}
+
+function createTimeAxisMenu() {
+  const menu = document.createElement("div");
+  menu.className = "hover-menu layer-menu time-axis-menu";
+  menu.innerHTML = `<button type="button" title="Choose linear or logarithmic time axis">T: ${state.timeAxis === "linear" ? "LIN" : "LOG"} ${chevronIcon()}</button><div class="menu-popover checklist"></div>`;
+  const popover = menu.querySelector(".menu-popover");
+  for (const [id, label] of [["linear", "Linear delay t"], ["log", "Logarithmic delay t"]]) {
+    const row = document.createElement("label");
+    const name = document.createElement("span");
+    name.textContent = label;
+    const radio = document.createElement("input");
+    radio.type = "radio";
+    radio.name = "time-axis";
+    radio.checked = state.timeAxis === id;
+    radio.addEventListener("change", () => {
+      if (!radio.checked) return;
+      state.timeAxis = id;
+      state.plots.filter(plot => plot.type === "time").forEach(plot => plot.reset());
+      document.querySelectorAll(".time-axis-menu button").forEach(button => {
+        button.innerHTML = `T: ${id === "linear" ? "LIN" : "LOG"} ${chevronIcon()}`;
+      });
+    });
+    row.append(name, radio);
+    popover.append(row);
+  }
+  return menu;
+}
+
 class CanvasPlot {
   constructor(panel, type) {
     this.panel = panel;
@@ -491,8 +616,12 @@ class CanvasPlot {
   }
 
   setData(data) {
+    const previousDelay = this.type === "time" ? directDelayDomain(this.data) : null;
     this.data = data;
-    if (!this.view) this.view = this.defaultView();
+    const nextDelay = this.type === "time" ? directDelayDomain(data) : null;
+    const changedDelayDomain = previousDelay && nextDelay &&
+      (nextDelay[1] / Math.max(previousDelay[1], 1e-12) > 2 || nextDelay[1] / Math.max(previousDelay[1], 1e-12) < .5);
+    if (!this.view || changedDelayDomain) this.view = this.defaultView();
     this.draw();
   }
 
@@ -504,9 +633,12 @@ class CanvasPlot {
     }
     if (this.type === "frequency") return {x0: Math.log10(this.data.frequency_hz[0]), x1: Math.log10(this.data.frequency_hz.at(-1)), y0: 0, y1: 1};
     if (this.type === "complex") return rangeForComplex(this.data);
-    const curves = Object.values(this.data.curves).filter(curve => Array.isArray(curve.time));
-    const time = curves[0]?.time || [0, 1];
-    return {x0: time[0], x1: time.at(-1), y0: 0, y1: 1};
+    const delay = directDelayDomain(this.data)?.[2] || [0, 1];
+    if (state.timeAxis === "log") {
+      const positive = delay.filter(value => value > 0);
+      return {x0: Math.log10(positive[0] || 1e-6), x1: Math.log10(positive.at(-1) || 1), y0: 0, y1: 1};
+    }
+    return {x0: delay[0], x1: delay.at(-1), y0: 0, y1: 1};
   }
 
   reset() { this.view = this.defaultView(); this.draw(); }
@@ -562,17 +694,23 @@ class CanvasPlot {
   }
 
   drawSky() {
-    const box = {left: 43, right: this.width - 14, top: 28, bottom: this.height - 27};
+    const box = {left: 43, right: this.width - 14, top: 38, bottom: this.height - 27};
     const f = this.data.field;
-    if (state.skyLayers.has("residual")) drawRaster(this.context, box, this.view, f, f.residual, value => viridis((value + 6) / 7));
-    else if (state.skyLayers.has("magnification")) drawRaster(this.context, box, this.view, f, f.log_magnification, value => viridis((value + 1) / 4));
+    let raster = null;
+    if (state.skyLayers.has("residual")) {
+      raster = {values: f.residual, low: -3, high: 0, label: "log₁₀|y − x + α(x)|"};
+    } else if (state.skyLayers.has("magnification")) {
+      raster = {values: f.log_magnification, low: -1, high: 3, label: "log₁₀|μ|"};
+    }
     else if (state.skyLayers.has("delayColors")) {
       const values = f.delay;
       const sorted = [...values].sort((a, b) => a - b);
       const lo = sorted[Math.floor(sorted.length * .03)];
       const hi = sorted[Math.floor(sorted.length * .92)];
-      drawRaster(this.context, box, this.view, f, values, value => viridis((value - lo) / Math.max(hi - lo, 1e-9)));
+      raster = {values, low: lo, high: Math.max(hi, lo + 1e-9), label: "Δτ"};
     }
+    if (raster) drawRaster(this.context, box, this.view, f, raster.values,
+      value => viridis((value - raster.low) / Math.max(raster.high - raster.low, 1e-12)));
     drawAxes(this.context, box, this.view, "x₁ / θ₀", "x₂ / θ₀");
     if (state.skyLayers.has("negative")) drawMask(this.context, box, this.view, f, f.negative, "rgba(30,144,255,.30)");
     if (state.skyLayers.has("delayContours")) drawSegments(this.context, box, this.view, f.delay_contours, "rgba(238,245,248,.42)", 0.7);
@@ -583,69 +721,90 @@ class CanvasPlot {
     }
     if (state.skyLayers.has("source")) drawImages(this.context, box, this.view, this.data);
     drawSkyLegend(this.context, box, state.skyLayers);
-    if (state.skyLayers.has("source")) drawMagnificationColorbar(this.context, box);
+    if (raster) drawRasterColorbar(this.context, box, raster);
   }
 
   drawFrequency() {
     const curves = Object.entries(this.data.curves);
     if (!curves.length) return drawEmpty(this.context, this.width, this.height, "No selected solver returned a curve");
-    const rows = curves.length > 1 ? 4 : 2;
-    const plotTop = 27;
+    const chosen = [...state.subpanels.frequency].filter(id => curves.length > 1 || !id.endsWith("Error"));
+    if (!chosen.length) return drawEmpty(this.context, this.width, this.height, "Choose a frequency sub-panel");
+    const rows = chosen.length;
+    const plotTop = 38;
     const plotBottom = this.height - 20;
     const rowHeight = (plotBottom - plotTop) / rows;
     const frequencyX = this.data.frequency_hz.map(Math.log10);
     const reference = curves[Math.min(1, curves.length - 1)][1];
-    const labels = rows === 4 ? ["|F|", "arg F", "Δ|F|", "Δ arg"] : ["|F|", "arg F"];
-    labels.forEach((label, row) => {
+    chosen.forEach((kind, row) => {
       const box = {left: 47, right: this.width - 12, top: plotTop + row * rowHeight + 3, bottom: plotTop + (row + 1) * rowHeight - 4};
       const series = curves.map(([id, curve]) => {
-        if (row === 0) return curve.amplitude;
-        if (row === 1) return curve.phase;
-        if (row === 2) return curve.amplitude.map((value, i) => Math.abs(value - reference.amplitude[i]) / Math.max(reference.amplitude[i], 1e-9));
+        if (kind === "amplitude") return curve.amplitude;
+        if (kind === "phase") return curve.phase;
+        if (kind === "amplitudeError") return curve.amplitude.map((value, i) => Math.abs(value - reference.amplitude[i]) / Math.max(reference.amplitude[i], 1e-9));
         return curve.phase.map((value, i) => Math.abs(value - reference.phase[i]));
       });
       const range = paddedRange(series.flat());
+      const label = {amplitude: "|F|", phase: "arg F", amplitudeError: "Δ|F|", phaseError: "Δ arg"}[kind];
       drawSubplot(this.context, box, this.view.x0, this.view.x1, range[0], range[1], frequencyX, series, curves, label, row === rows - 1 ? "f [Hz]" : "", true);
     });
-    drawCurveLegend(this.context, curves);
+    drawCurveLegend(this.context, curves, this.width);
   }
 
   drawTime() {
-    const curves = Object.entries(this.data.curves).filter(([, curve]) => Array.isArray(curve.time_response));
-    if (!curves.length) return drawEmpty(this.context, this.width, this.height, "Choose GLoW to show its internal I(t) response");
-    const rows = curves.length > 1 ? 2 : 1;
+    const curves = Object.entries(this.data.curves).filter(([, curve]) => Array.isArray(curve.delay_density));
+    if (!curves.length) return drawEmpty(this.context, this.width, this.height, "Choose a solver with a direct contour or histogram F(t)");
+    const chosen = [...state.subpanels.time].filter(id => curves.length > 1 || id !== "error");
+    if (!chosen.length) return drawEmpty(this.context, this.width, this.height, "Choose a time sub-panel");
+    const rows = chosen.length;
     const reference = curves[Math.min(1, curves.length - 1)][1];
-    for (let row = 0; row < rows; row++) {
-      const box = {left: 47, right: this.width - 12, top: 28 + row * (this.height - 50) / rows, bottom: 24 + (row + 1) * (this.height - 50) / rows};
-      const series = curves.map(([, curve]) => row === 0 ? curve.time_response : curve.time_response.map((value, i) => value - reference.time_response[i]));
+    // Keep the richest direct response as the plotting grid.  In particular, this
+    // preserves the Ulmer--Goodman contour steps and logarithmic peaks when it is
+    // plotted beside GLoW's deliberately compact response sample.
+    const gridCurve = curves.reduce((best, current) => current[1].delay.length > best[1].delay.length ? current : best);
+    const rawDelayGrid = gridCurve[1].delay;
+    const keep = state.timeAxis === "log" ? rawDelayGrid.map(value => value > 0) : rawDelayGrid.map(() => true);
+    const delayGrid = rawDelayGrid.filter((_, index) => keep[index]);
+    const displayDelay = state.timeAxis === "log" ? delayGrid.map(Math.log10) : delayGrid;
+    chosen.forEach((kind, row) => {
+      const plotTop = 38;
+      const plotBottom = this.height - 24;
+      const box = {left: 47, right: this.width - 12, top: plotTop + row * (plotBottom - plotTop) / rows + 2, bottom: plotTop + (row + 1) * (plotBottom - plotTop) / rows - 4};
+      const referenceDensity = interpolateSeries(reference.delay, reference.delay_density, delayGrid);
+      const series = curves.map(([, curve]) => {
+        const density = interpolateSeries(curve.delay, curve.delay_density, delayGrid);
+        return kind === "response" ? density : density.map((value, i) => value - referenceDensity[i]);
+      });
       const range = paddedRange(series.flat());
-      drawSubplot(this.context, box, this.view.x0, this.view.x1, range[0], range[1], curves[0][1].time, series, curves, row ? "ΔI(t)" : "I(t)", row === rows - 1 ? "dimensionless delay t" : "");
-    }
-    drawCurveLegend(this.context, curves);
+      drawSubplot(this.context, box, this.view.x0, this.view.x1, range[0], range[1], displayDelay, series, curves,
+        kind === "error" ? "ΔF(t)" : "F(t)", row === rows - 1 ? (state.timeAxis === "log" ? "log₁₀ t" : "dimensionless delay t") : "");
+    });
+    drawCurveLegend(this.context, curves, this.width);
   }
 
   drawComplex() {
     const curves = Object.entries(this.data.curves);
     if (!curves.length) return drawEmpty(this.context, this.width, this.height, "No selected solver returned a curve");
-    const columns = curves.length > 1 ? 2 : 1;
+    const chosen = [...state.subpanels.complex].filter(id => curves.length > 1 || id !== "error");
+    if (!chosen.length) return drawEmpty(this.context, this.width, this.height, "Choose a complex sub-panel");
+    const columns = chosen.length;
     const reference = curves[Math.min(1, curves.length - 1)][1];
-    for (let column = 0; column < columns; column++) {
+    chosen.forEach((kind, column) => {
       const width = (this.width - 50) / columns;
-      const box = {left: 42 + column * width, right: 34 + (column + 1) * width, top: 30, bottom: this.height - 28};
+      const box = {left: 42 + column * width, right: 34 + (column + 1) * width, top: 38, bottom: this.height - 28};
       let columnView = this.view;
-      if (column) {
+      if (kind === "error") {
         const residualValues = curves.flatMap(([, curve]) => curve.real.map((value, index) => value - reference.real[index]).concat(curve.imag.map((value, index) => value - reference.imag[index])));
         const [lo, hi] = paddedRange(residualValues);
         columnView = {x0: lo, x1: hi, y0: lo, y1: hi};
       }
-      drawAxes(this.context, box, columnView, column ? "Re ΔF" : "Re F", column ? "Im ΔF" : "Im F");
+      drawAxes(this.context, box, columnView, kind === "error" ? "Re ΔF" : "Re F", kind === "error" ? "Im ΔF" : "Im F");
       curves.forEach(([id, curve], index) => {
-        const xs = column ? curve.real.map((value, i) => value - reference.real[i]) : curve.real;
-        const ys = column ? curve.imag.map((value, i) => value - reference.imag[i]) : curve.imag;
+        const xs = kind === "error" ? curve.real.map((value, i) => value - reference.real[i]) : curve.real;
+        const ys = kind === "error" ? curve.imag.map((value, i) => value - reference.imag[i]) : curve.imag;
         drawLine(this.context, box, columnView, xs, ys, STYLE[index % STYLE.length]);
       });
-    }
-    drawCurveLegend(this.context, curves);
+    });
+    drawCurveLegend(this.context, curves, this.width);
   }
 }
 
@@ -663,6 +822,26 @@ function paddedRange(values) {
   if (lo === hi) { lo -= 1; hi += 1; }
   const pad = .08 * (hi - lo);
   return [lo - pad, hi + pad];
+}
+
+function interpolateSeries(xs, ys, targetXs) {
+  let index = 0;
+  return targetXs.map(target => {
+    while (index < xs.length - 2 && xs[index + 1] < target) index++;
+    const left = xs[index], right = xs[index + 1];
+    if (target <= left) return ys[index];
+    if (target >= right && index === xs.length - 2) return ys.at(-1);
+    const fraction = (target - left) / Math.max(right - left, 1e-12);
+    return ys[index] + fraction * (ys[index + 1] - ys[index]);
+  });
+}
+
+function directDelayDomain(data) {
+  if (!data) return null;
+  const curves = Object.values(data.curves).filter(curve => Array.isArray(curve.delay_density) && curve.delay.length > 1);
+  if (!curves.length) return null;
+  const curve = curves.reduce((best, current) => current.delay.length > best.delay.length ? current : best);
+  return [curve.delay[0], curve.delay.at(-1), curve.delay];
 }
 
 function rangeForComplex(data) {
@@ -727,14 +906,17 @@ function drawSubplot(context, box, x0, x1, y0, y1, xs, series, curves, yLabel, x
   series.forEach((values, index) => drawLine(context, box, view, xs, values, STYLE[index % STYLE.length]));
 }
 
-function drawCurveLegend(context, curves) {
+function drawCurveLegend(context, curves, width) {
+  // Narrow panels devote their small header to controls.  The colours and line
+  // styles still identify curves without printing a legend through those controls.
+  if (width < 720) return;
   context.save();
   context.font = "9px system-ui";
   let x = 150;
   curves.forEach(([, curve], index) => {
     const style = STYLE[index % STYLE.length];
-    context.strokeStyle = style.color; context.setLineDash(style.dash); context.beginPath(); context.moveTo(x, 15); context.lineTo(x + 18, 15); context.stroke();
-    context.fillStyle = "#aebfc8"; context.textAlign = "left"; context.fillText(curve.label, x + 23, 18);
+    context.strokeStyle = style.color; context.setLineDash(style.dash); context.beginPath(); context.moveTo(x, 29); context.lineTo(x + 18, 29); context.stroke();
+    context.fillStyle = "#aebfc8"; context.textAlign = "left"; context.fillText(curve.label, x + 23, 32);
     x += Math.min(170, 31 + context.measureText(curve.label).width);
   });
   context.restore();
@@ -809,18 +991,21 @@ function drawImages(context, box, view, data) {
   context.restore();
 }
 
-function drawMagnificationColorbar(context, box) {
+function drawRasterColorbar(context, box, raster) {
   const x = box.right - 13, y = box.top + 24, height = Math.min(84, box.bottom - box.top - 45);
   if (height < 30) return;
   const gradient = context.createLinearGradient(0, y + height, 0, y);
-  for (let i = 0; i <= 8; i++) gradient.addColorStop(i / 8, plasma(i / 8));
+  for (let i = 0; i <= 8; i++) gradient.addColorStop(i / 8, viridis(i / 8));
   context.save();
-  context.fillStyle = "rgba(8,16,23,.72)"; context.fillRect(x - 4, y - 14, 34, height + 23);
+  context.font = "7px system-ui";
+  const labelWidth = Math.max(38, context.measureText(raster.label).width + 8);
+  context.fillStyle = "rgba(8,16,23,.72)"; context.fillRect(x - labelWidth - 4, y - 14, labelWidth + 34, height + 23);
   context.fillStyle = gradient; context.fillRect(x, y, 7, height);
   context.strokeStyle = "rgba(255,255,255,.55)"; context.strokeRect(x, y, 7, height);
-  context.fillStyle = "#d5e0e5"; context.font = "7px system-ui"; context.textAlign = "left";
-  context.fillText("log|μ|", x - 3, y - 4);
-  context.fillText("3", x + 10, y + 4); context.fillText("−1", x + 10, y + height);
+  context.fillStyle = "#d5e0e5"; context.textAlign = "left";
+  context.fillText(raster.label, x - labelWidth, y - 4);
+  context.fillText(formatNumber(raster.high), x + 10, y + 4);
+  context.fillText(formatNumber(raster.low), x + 10, y + height);
   context.restore();
 }
 
@@ -861,12 +1046,6 @@ function makeSplitter(id, direction) {
   });
 }
 
-document.getElementById("model-select").addEventListener("change", event => {
-  state.model = event.target.value;
-  buildControls();
-  buildSolverOptions();
-  scheduleRefresh();
-});
 document.getElementById("refresh-button").addEventListener("click", refresh);
 document.getElementById("refresh-delay").addEventListener("change", event => {
   document.getElementById("timed-delay-wrap").classList.toggle("hidden", event.target.value !== "timed");
@@ -876,6 +1055,7 @@ document.getElementById("timed-delay").addEventListener("input", scheduleRefresh
 window.addEventListener("resize", () => { layoutAllControls(); state.plots.forEach(plot => plot.resize()); });
 
 buildControls();
+buildModelOptions();
 buildSolverOptions();
 buildPanelOptions();
 renderPanels();

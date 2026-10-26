@@ -1,0 +1,15 @@
+# Python requirements for the local Gravitational Lensing visualizer.
+#
+# Run from this repository with the ``gw`` micromamba environment, then start
+# the application using: python -m viz.server
+#
+# The ``bgo`` and ``ab_initio`` modules are included in this repository and do
+# not need separate installation.  The browser interface uses only standard
+# HTML, CSS, and JavaScript; no Node.js packages are needed.
+
+numpy>=1.26
+scipy>=1.15
+astropy>=6.1
+contourpy>=1.3
+mpmath>=1.3
+glow==0.1

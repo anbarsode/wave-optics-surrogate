@@ -16,19 +16,13 @@
         <span>GRAVITATIONAL LENSING</span>
       </div>
 
-      <label class="model-choice tip" data-tip="The lens density profile. Every profile is aligned with the horizontal and vertical axes.">
-        <span>BASE LENS</span>
-        <select id="model-select" aria-label="Base lens model">
-          <option value="PM">Point mass</option>
-          <option value="SIS">Singular isothermal sphere</option>
-          <option value="SIE">Singular isothermal ellipsoid</option>
-          <option value="CIS">Cored isothermal sphere</option>
-          <option value="NFW">Navarro–Frenk–White</option>
-          <option value="eNFW">Elliptical NFW</option>
-          <option value="EPL">Elliptical power law</option>
-          <option value="Hernquist">Hernquist</option>
-        </select>
-      </label>
+      <div class="hover-menu model-menu tip" data-tip="The lens density profile. Every profile is aligned with the horizontal and vertical axes.">
+        <button class="menu-trigger" type="button" aria-haspopup="true" aria-label="Base lens model">
+          <span><small>BASE LENS</small><strong id="model-summary">Point mass</strong></span>
+          <svg class="chevron-icon" aria-hidden="true" viewBox="0 0 448 512"><path d="M201.4 137.4c12.5-12.5 32.8-12.5 45.3 0l160 160c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L224 205.3 86.6 342.6c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3l160-160z"/></svg>
+        </button>
+        <div id="model-options" class="menu-popover checklist model-options"></div>
+      </div>
 
       <div class="refresh-cluster">
         <button id="refresh-button" class="refresh-button" type="button" title="Recalculate all selected panels now">
@@ -50,13 +44,13 @@
       <div class="hover-menu solver-menu">
         <button class="menu-trigger" type="button" aria-haspopup="true">
           <span><small>F(f) SOLVERS</small><strong id="solver-summary">2 selected</strong></span>
-          <span aria-hidden="true">⌄</span>
+          <svg class="chevron-icon" aria-hidden="true" viewBox="0 0 448 512"><path d="M201.4 137.4c12.5-12.5 32.8-12.5 45.3 0l160 160c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L224 205.3 86.6 342.6c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3l160-160z"/></svg>
         </button>
         <div id="solver-options" class="menu-popover checklist"></div>
       </div>
       <div id="solver-controls" class="compact-controls" data-overflow-menu="solver-more"></div>
       <div id="solver-more" class="hover-menu more-menu hidden">
-        <button class="more-trigger" type="button">MORE <span aria-hidden="true">⌄</span></button>
+        <button class="more-trigger" type="button">MORE <svg class="chevron-icon" aria-hidden="true" viewBox="0 0 448 512"><path d="M201.4 137.4c12.5-12.5 32.8-12.5 45.3 0l160 160c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L224 205.3 86.6 342.6c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3l160-160z"/></svg></button>
         <div class="menu-popover overflow-popover"></div>
       </div>
     </section>
@@ -64,7 +58,7 @@
     <section class="control-strip parameter-strip" aria-label="Lens, source, and frequency parameters">
       <div id="parameter-controls" class="compact-controls" data-overflow-menu="parameter-more"></div>
       <div id="parameter-more" class="hover-menu more-menu hidden">
-        <button class="more-trigger" type="button">MORE PARAMETERS <span aria-hidden="true">⌄</span></button>
+        <button class="more-trigger" type="button">MORE PARAMETERS <svg class="chevron-icon" aria-hidden="true" viewBox="0 0 448 512"><path d="M201.4 137.4c12.5-12.5 32.8-12.5 45.3 0l160 160c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L224 205.3 86.6 342.6c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3l160-160z"/></svg></button>
         <div class="menu-popover overflow-popover"></div>
       </div>
     </section>
@@ -73,7 +67,7 @@
       <div class="hover-menu panel-menu">
         <button class="menu-trigger" type="button" aria-haspopup="true">
           <span><small>PANEL GRID</small><strong id="panel-summary">4 panels</strong></span>
-          <span aria-hidden="true">⌄</span>
+          <svg class="chevron-icon" aria-hidden="true" viewBox="0 0 448 512"><path d="M201.4 137.4c12.5-12.5 32.8-12.5 45.3 0l160 160c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L224 205.3 86.6 342.6c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3l160-160z"/></svg>
         </button>
         <div id="panel-options" class="menu-popover panel-counts"></div>
       </div>
