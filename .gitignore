@@ -7,3 +7,4 @@ WRITING_STYLE.md
 __pycache__
 *.npz
 *.csv
+decomposition/external_potential_tests_files/

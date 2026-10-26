@@ -1,0 +1,1 @@
+"""Interactive gravitational-lensing visualizer."""

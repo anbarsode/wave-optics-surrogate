@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Interactive wave-optics and geometric-optics gravitational lensing visualizer">
+  <title>Gravitational Lensing</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main id="app">
+    <header class="topbar">
+      <div class="brand" aria-label="Application title">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>GRAVITATIONAL LENSING</span>
+      </div>
+
+      <label class="model-choice tip" data-tip="The smooth, circular lens profile used by every solver.">
+        <span>BASE LENS</span>
+        <select id="model-select" aria-label="Base lens model">
+          <option value="PM">Point mass</option>
+          <option value="SIS">Singular isothermal sphere</option>
+        </select>
+      </label>
+
+      <div class="refresh-cluster">
+        <button id="refresh-button" class="refresh-button" type="button" title="Recalculate all selected panels now">
+          <span aria-hidden="true">↻</span> REFRESH
+        </button>
+        <label class="delay-choice tip" data-tip="Wait this long after the last slider movement before recalculating.">
+          <span>AUTO</span>
+          <select id="refresh-delay" aria-label="Automatic refresh delay">
+            <option value="0">Off</option>
+            <option value="150">0.15 s</option>
+            <option value="400" selected>0.4 s</option>
+            <option value="1000">1 s</option>
+            <option value="2500">2.5 s</option>
+          </select>
+        </label>
+      </div>
+    </header>
+
+    <section class="control-strip solver-strip" aria-label="Solver choices and settings">
+      <div class="hover-menu solver-menu">
+        <button class="menu-trigger" type="button" aria-haspopup="true">
+          <span><small>F(f) SOLVERS</small><strong id="solver-summary">2 selected</strong></span>
+          <span aria-hidden="true">⌄</span>
+        </button>
+        <div id="solver-options" class="menu-popover checklist"></div>
+      </div>
+      <div id="solver-controls" class="compact-controls" data-overflow-menu="solver-more"></div>
+      <div id="solver-more" class="hover-menu more-menu hidden">
+        <button class="more-trigger" type="button">MORE <span aria-hidden="true">⌄</span></button>
+        <div class="menu-popover overflow-popover"></div>
+      </div>
+    </section>
+
+    <section class="control-strip parameter-strip" aria-label="Lens, source, and frequency parameters">
+      <div id="parameter-controls" class="compact-controls" data-overflow-menu="parameter-more"></div>
+      <div id="parameter-more" class="hover-menu more-menu hidden">
+        <button class="more-trigger" type="button">MORE PARAMETERS <span aria-hidden="true">⌄</span></button>
+        <div class="menu-popover overflow-popover"></div>
+      </div>
+    </section>
+
+    <section class="control-strip panel-strip" aria-label="Panel choices">
+      <div class="hover-menu panel-menu">
+        <button class="menu-trigger" type="button" aria-haspopup="true">
+          <span><small>PANEL GRID</small><strong id="panel-summary">4 panels</strong></span>
+          <span aria-hidden="true">⌄</span>
+        </button>
+        <div id="panel-options" class="menu-popover panel-counts"></div>
+      </div>
+      <div class="panel-hint">DRAG GRID EDGES TO RESIZE · SCROLL TO ZOOM · DRAG A PLOT TO PAN</div>
+      <div id="status" class="status ready"><span class="status-dot"></span><span>Ready</span></div>
+    </section>
+
+    <section id="visualization" class="visualization" aria-label="Visualization panels">
+      <div id="panel-grid" class="panel-grid"></div>
+      <div id="vertical-splitter" class="grid-splitter vertical" title="Drag to resize columns"></div>
+    </section>
+
+    <footer id="geometry-bar" class="geometry-bar" aria-live="polite">
+      <div class="geometry-heading">
+        <span class="eyebrow">GEOMETRIC OPTICS</span>
+        <strong id="image-count">— images</strong>
+      </div>
+      <div id="image-list" class="image-list"><span class="muted">Move a parameter or press refresh to calculate.</span></div>
+      <div id="cosmology-note" class="cosmology-note">Planck18</div>
+    </footer>
+  </main>
+
+  <template id="slider-template">
+    <label class="mini-control tip">
+      <span class="control-label"><span class="label-text"></span><output></output></span>
+      <input type="range">
+    </label>
+  </template>
+
+  <script src="/app.js" defer></script>
+</body>
+</html>

@@ -64,7 +64,9 @@ def make_grids(model: str):
 def plot_curves(model, surrogates, y_train, w, output):
     """Real and imaginary parts of both normalized G curves over source position."""
     fig, axes = plt.subplots(2, 4, figsize=(18, 8), sharex=True)
-    sample_y = np.sqrt(y_train[:-1]*y_train[1:])[::2]
+    # Include the upper training endpoint: a disappearing correction there
+    # can be hidden if only midpoints are drawn.
+    sample_y = np.r_[np.sqrt(y_train[:-1]*y_train[1:])[::2], y_train[-1]]
     cmap = plt.get_cmap('plasma')
     norm = LogNorm(y_train[0], y_train[-1])
     for row, (label, surrogate) in enumerate(surrogates.items()):

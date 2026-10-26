@@ -19,12 +19,14 @@ the same spline knots and the same positive quadratic norm at every ``y``:
                         + eta2*|u_i''|^2] d(log10 w),
     u_i = S_i(log10 w)/(1+w).
 
-Minimize R subject to a bound on the weighted RMS error in F. This is the
-Sobolev-orthogonal representative of the image-decomposition gauge freedom.
-For a fixed number of knots the solution is unique because eta0 > 0. The
-single-error-constraint solution is found by bisection on its Lagrange
-multiplier, with only Hermitian linear solves. See the report accompanying
-the notebook for details and validation.
+Where the geometric or BGO baseline alone satisfies the error bound, also
+penalize changes of spline coefficients between neighboring training
+positions. This removes the abrupt loss of a fitted correction there without
+altering well-constrained positions elsewhere. For a fixed number of knots
+the joint objective is strictly convex because eta0 > 0.
+Each single-position constrained solve uses bisection on its Lagrange
+multiplier and Hermitian linear systems. See the report accompanying the
+notebook for details and validation.
 """
 
 import os
@@ -64,26 +66,44 @@ def image_phases(w: np.ndarray, delays: np.ndarray) -> np.ndarray:
 
 
 def bgo_start(w: np.ndarray, model: str, y: float, wave: np.ndarray,
-              tolerance: float = 0.01) -> float:
-    """Earliest frequency after which second-order BGO stays within tolerance.
+              tolerance: float = 0.01,
+              image_fraction: float = 0.25) -> float:
+    """BGO onset from total-wave accuracy and the size of each image term.
 
-    The ground truth is used only while *building* the surrogate. If no
-    frequency passes, set the start to the upper end, so BGO remains off
-    throughout the represented frequency band.
+    The total-wave test alone can miss a bad correction to a faint image:
+    the bright image hides it in F. For each ordinary image, require the
+    sum of the magnitudes of its first two BGO terms to be at most
+    ``image_fraction`` of its geometric magnitude before turning BGO on.
+    Both terms then decrease at higher frequency. The ground truth is used
+    only while building the surrogate. If no sampled frequency passes the
+    total-wave test, set the start to the upper end of the reference grid.
     """
     approximation = bgo_amplification(w, model, [y, 0], order=2)
     error = abs(approximation-wave)/np.maximum(abs(wave), 1e-12)
     remaining_maximum = np.maximum.accumulate(error[::-1])[::-1]
     valid = np.flatnonzero(remaining_maximum <= tolerance)
     if not len(valid):
-        return float(w[-1])
-    index = valid[0]
-    if index == 0:
-        return float(w[0])
-    # Interpolate the crossing to avoid steps at the sampled frequencies.
-    previous, current = remaining_maximum[index-1:index+1]
-    fraction = (previous-tolerance)/(previous-current) if previous > current else 1.0
-    return float(np.exp(np.log(w[index-1])*(1-fraction)+np.log(w[index])*fraction))
+        full_start = float(w[-1])
+    elif valid[0] == 0:
+        full_start = float(w[0])
+    else:
+        # Interpolate the crossing to avoid steps at the sampled frequencies.
+        index = valid[0]
+        previous, current = remaining_maximum[index-1:index+1]
+        fraction = (previous-tolerance)/(previous-current) if previous > current else 1.0
+        full_start = float(np.exp(np.log(w[index-1])*(1-fraction)+np.log(w[index])*fraction))
+
+    first, _ = isolated_parts(np.array([1.0]), model, y, order=1)
+    both, _ = isolated_parts(np.array([1.0]), model, y, order=2)
+    magnitudes, _ = geometry(model, y)
+    first_fraction = abs(first[:, 0])/magnitudes
+    second_fraction = abs(both[:, 0]-first[:, 0])/magnitudes
+    # Solve A/w+B/w² = image_fraction for each image, then use the latest
+    # onset so every ordinary image has small corrections.
+    image_starts = (first_fraction+np.sqrt(first_fraction**2
+                                          +4*image_fraction*second_fraction))
+    image_starts /= 2*image_fraction
+    return max(full_start, float(np.max(image_starts)))
 
 
 def bgo_window(w: np.ndarray, start: float) -> np.ndarray:
@@ -147,7 +167,9 @@ def asymptotic_base(w: np.ndarray, model: str, y: float, order: int,
 
 def minimum_smoothness_fit(w: np.ndarray, wave: np.ndarray, phases: np.ndarray,
                            base: np.ndarray, center: np.ndarray, basis: CanonicalBasis,
-                           rms_limit: float = 0.01) -> tuple[np.ndarray, float, float]:
+                           rms_limit: float = 0.01,
+                           prior: np.ndarray | None = None,
+                           prior_strength: float = 0.0) -> tuple[np.ndarray, float, float]:
     """Canonical curves for any number of images at an RMS complex-error limit.
 
     All images enter the norm. The data constraint is
@@ -155,8 +177,11 @@ def minimum_smoothness_fit(w: np.ndarray, wave: np.ndarray, phases: np.ndarray,
         mean(|F_fit-F_wave|^2 / max(|F_wave|, 0.1)^2) <= rms_limit^2.
 
     ``phases`` and ``base`` have shape (number of images, number of w values).
-    Bisection finds the largest ridge multiplier satisfying the error limit;
-    that solution minimizes the positive quadratic norm in the feasible set.
+    The optional prior adds ``prior_strength * ||values-prior||_R**2`` to the
+    smoothness norm. It is used when fitting neighboring source positions
+    together. Bisection finds the largest ridge multiplier satisfying the
+    error limit; that solution minimizes the quadratic norm in the feasible
+    set.
     If the spline space cannot reach the limit, return its least-squares fit
     and report the achieved error. The same frequency knots and norm must be
     used at each lens-parameter value to obtain a stable convention.
@@ -171,11 +196,26 @@ def minimum_smoothness_fit(w: np.ndarray, wave: np.ndarray, phases: np.ndarray,
     weighted_target = target/scale
     gram = weighted_matrix.conj().T @ weighted_matrix/len(w)
     rhs = weighted_matrix.conj().T @ weighted_target/len(w)
+    if prior is None:
+        prior = np.zeros(image_count*basis.knot_count, dtype=complex)
+    else:
+        prior = np.asarray(prior).reshape(-1)
+    objective_norm = (1+prior_strength)*norm
+    objective_rhs = prior_strength*norm @ prior
 
     def solution(multiplier):
-        values = solve(gram+multiplier*norm, rhs, assume_a='her')
+        values = solve(gram+multiplier*objective_norm,
+                       rhs+multiplier*objective_rhs, assume_a='her')
         error = np.sqrt(np.mean(abs(weighted_matrix @ values-weighted_target)**2))
         return values, float(error)
+
+    # If the minimum of the regularizer is already accurate enough, it is
+    # the exact constrained solution. This case occurs at large PM y, where
+    # the geometric baseline alone can meet the RMS limit.
+    preferred = prior_strength*prior/(1+prior_strength)
+    preferred_error = np.sqrt(np.mean(abs(weighted_matrix @ preferred-weighted_target)**2))
+    if preferred_error <= rms_limit:
+        return preferred.reshape(image_count, -1), float(preferred_error), np.inf
 
     # The tiny positive multiplier resolves rank loss if the frequency samples
     # leave a nearly invisible image-mixing direction.
@@ -199,12 +239,15 @@ def minimum_smoothness_fit(w: np.ndarray, wave: np.ndarray, phases: np.ndarray,
 
 def canonical_fit(w: np.ndarray, wave: np.ndarray, model: str, y: float,
                   basis: CanonicalBasis, order: int, start: float,
-                  rms_limit: float = 0.01) -> tuple[np.ndarray, float, float]:
+                  rms_limit: float = 0.01,
+                  prior: np.ndarray | None = None,
+                  prior_strength: float = 0.0) -> tuple[np.ndarray, float, float]:
     """Apply the general canonical rule to one isolated PM or SIS lens."""
     _, delays = geometry(model, y)
     phases = image_phases(w, delays)
     base, center = asymptotic_base(w, model, y, order, start)
-    return minimum_smoothness_fit(w, wave, phases, base, center, basis, rms_limit)
+    return minimum_smoothness_fit(w, wave, phases, base, center, basis,
+                                  rms_limit, prior, prior_strength)
 
 
 @dataclass
@@ -251,9 +294,27 @@ class FullSurrogate:
 def build_surrogate(model: str, order: int, y_train: np.ndarray, w_train: np.ndarray,
                     basis: CanonicalBasis, rms_limit: float = 0.01,
                     waves: np.ndarray | None = None,
-                    starts: np.ndarray | None = None
+                    starts: np.ndarray | None = None,
+                    source_smoothness: float = 1.0
                     ) -> tuple[FullSurrogate, np.ndarray, np.ndarray]:
-    """Fit source positions independently under one fixed canonical convention."""
+    """Fit smooth image curves jointly across source position.
+
+With ``x_j = log(y_j)``, minimize the sum of the frequency smoothness
+    norms plus
+
+        source_smoothness * sum_j active_j
+        * ||v_j-v_(j-1)||_R**2 / (x_j-x_(j-1)),
+
+    subject to the same RMS amplification error limit at every training
+    position. ``v_j`` contains all image spline coefficients at ``y_j``.
+    ``active_j`` rises smoothly from zero to one as the baseline error at
+    either end of an interval falls from 1.2 times the RMS limit to the
+    limit itself. The additional cost acts where a correction could
+    otherwise vanish abruptly, without adding a discontinuous switch.
+    Forward and backward coordinate sweeps solve this convex problem using
+    the single-position constrained solver. The same rule applies at every
+    source position, including the ends of the fitted range.
+    """
     values, errors, fitted_starts = [], [], []
     if waves is None:
         waves = np.array([isolated_lens(model, w_train, float(y)).wave for y in y_train])
@@ -265,8 +326,46 @@ def build_surrogate(model: str, order: int, y_train: np.ndarray, w_train: np.nda
         values.append(fitted)
         errors.append(error)
         fitted_starts.append(start)
+    values = np.asarray(values)
+    errors = np.asarray(errors)
+    if source_smoothness and len(y_train) > 1:
+        x = np.log(y_train)
+        baseline_errors = []
+        for index, y in enumerate(y_train):
+            magnitudes, delays = geometry(model, float(y))
+            base, center = asymptotic_base(w_train, model, float(y), order,
+                                           float(fitted_starts[index]))
+            baseline = center+np.sum(image_phases(w_train, delays)*base, axis=0)
+            scale = np.maximum(abs(waves[index]), 0.1)
+            baseline_errors.append(np.sqrt(np.mean(abs((baseline-waves[index])/scale)**2)))
+        # A smooth gate avoids a new discontinuity if a small change of lens
+        # parameters moves a baseline error across the RMS limit.
+        margin = np.clip((1.2*rms_limit-np.asarray(baseline_errors))
+                         /(0.2*rms_limit), 0, 1)
+        activation = margin**2*(3-2*margin)
+        active = np.maximum(activation[:-1], activation[1:])
+        edge_weights = source_smoothness*active/np.diff(x)
+        for _ in range(30):
+            previous = values.copy()
+            for positions in (range(len(y_train)), range(len(y_train)-1, -1, -1)):
+                for index in positions:
+                    neighbors = []
+                    if index and edge_weights[index-1]:
+                        neighbors.append((edge_weights[index-1], values[index-1]))
+                    if index+1 < len(y_train) and edge_weights[index]:
+                        neighbors.append((edge_weights[index], values[index+1]))
+                    if not neighbors:
+                        continue
+                    strength = sum(weight for weight, _ in neighbors)
+                    prior = sum(weight*neighbor for weight, neighbor in neighbors)/strength
+                    values[index], errors[index], _ = canonical_fit(
+                        w_train, waves[index], model, float(y_train[index]), basis,
+                        order, float(fitted_starts[index]), rms_limit,
+                        prior=prior, prior_strength=strength)
+            if np.max(abs(values-previous)) < 1e-7:
+                break
     surrogate = FullSurrogate(model, order, np.asarray(y_train), basis.knots,
-                              np.asarray(values), np.asarray(fitted_starts))
+                              values, np.asarray(fitted_starts))
     return surrogate, np.asarray(errors), np.asarray(fitted_starts)
 
 

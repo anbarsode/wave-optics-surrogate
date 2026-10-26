@@ -1,5 +1,10 @@
 """Smooth image contributions to isolated point-mass and SIS wave amplification.
 
+For the lens-independent fitter with adaptive knot positions and a hard
+relative-L2 accuracy limit, use ``decomposition.decomposer.decompose``.
+The fitting function in this file preserves the original isolated-notebook
+experiment and its settings.
+
 For two images, with the minimum arrival time subtracted, the model is
 
     F(w) = G_min(w) + G_sad(w) exp[i w Delta T - i pi/2].
