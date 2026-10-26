@@ -89,10 +89,20 @@ def _json(values: np.ndarray) -> list[float]:
     return np.nan_to_num(np.asarray(values), nan=0., posinf=1e12, neginf=-1e12).astype(float).ravel().tolist()
 
 
+def _unwrap_from_high_frequency(values: np.ndarray) -> np.ndarray:
+    """Unwrap phase backwards so curves share their unambiguous high-f limit.
+
+    Geometric optics is the high-frequency limit used by the BGO solver.  Starting
+    there avoids giving two otherwise identical curves a spurious 2 pi separation
+    when their low-frequency phase happens to cross different principal branches.
+    """
+    return np.unwrap(np.angle(np.asarray(values, complex))[::-1])[::-1]
+
+
 def _curve(values: np.ndarray, label: str, delay: tuple[np.ndarray, np.ndarray] | None = None) -> dict[str, Any]:
     values = np.asarray(values, complex)
     output: dict[str, Any] = {"label": label, "real": _json(values.real), "imag": _json(values.imag),
-                              "amplitude": _json(abs(values)), "phase": _json(np.unwrap(np.angle(values)))}
+                              "amplitude": _json(abs(values)), "phase": _json(_unwrap_from_high_frequency(values))}
     if delay is not None:
         output["delay"], output["delay_density"] = _json(delay[0]), _json(delay[1])
     return output
@@ -300,21 +310,54 @@ def _glow_critical_points(settings: Settings, images: list[dict[str, Any]]) -> l
     return points
 
 
+def _glow_area_response(settings: Settings, images: list[dict[str, Any]]):
+    """Return GLoW's robust area-integral response for a PM with an external field.
+
+    The multi-contour construction occasionally cannot bracket a contour near a
+    Chang--Refsdal caustic.  The area integral samples the same lens directly,
+    and the independently solved images supply its singularity subtraction.
+    """
+    from glow import time_domain_c
+    lens, y = _glow_lens(settings)
+    response = time_domain_c.It_AreaIntegral_C(
+        lens, y, {"n_rho": 40000, "n_theta": 4000, "Nt": 20000, "tmax": 1000}
+    )
+    response.p_crits = _glow_critical_points(settings, images)
+    return response
+
+
 def _glow(settings: Settings,w: np.ndarray,display_points: int,accuracy: float,images: list[dict[str,Any]]) -> tuple[np.ndarray,tuple[np.ndarray,np.ndarray],str]:
     """Reference GLoW response plus regularised FFT; paired resolutions check convergence."""
     from glow import freq_domain_c,time_domain_c
     lens,y=_glow_lens(settings); tolerance=10**accuracy
     levels=(16000,20000) if tolerance<=.008 else ((8000,12000) if tolerance<=.03 else (3000,4500)); values=[]; responses=[]
     four_pm=settings.model=="PM" and settings.use_external and len(images)>=4
-    for nt in levels:
-        if four_pm:
-            response=time_domain_c.It_AreaIntegral_C(lens,y,{"n_rho":40000 if nt==levels[0] else 80000,"n_theta":4000,"Nt":20000,"tmax":1000})
-            response.p_crits = _glow_critical_points(settings, images)
-        else:
-            integral=time_domain_c.It_SingleIntegral_C if lens.isAxisym else time_domain_c.It_MultiContour_C
-            response=integral(lens,y,{"Nt":nt,"tmax":1e4,"parallel":False})
+    try:
+        for nt in levels:
+            if four_pm:
+                response=time_domain_c.It_AreaIntegral_C(lens,y,{"n_rho":40000 if nt==levels[0] else 80000,"n_theta":4000,"Nt":20000,"tmax":1000})
+                response.p_crits = _glow_critical_points(settings, images)
+            else:
+                integral=time_domain_c.It_SingleIntegral_C if lens.isAxisym else time_domain_c.It_MultiContour_C
+                response=integral(lens,y,{"Nt":nt,"tmax":1e4,"parallel":False})
+            transform=freq_domain_c.Fw_FFT_C(response,{"wmin":float(min(w)),"wmax":float(1.2*max(w)),"eval_mode":"exact","parallel":False,"N_above_discard":7})
+            value=np.asarray(transform(w),complex)
+            if not np.all(np.isfinite(value)):
+                raise FloatingPointError("the contour response did not converge")
+            values.append(value); responses.append(response)
+    except (FloatingPointError, ValueError) as error:
+        if settings.model != "PM" or not settings.use_external:
+            raise error
+        # This is a numerical route change, not a geometric-optics replacement.
+        # It keeps the failed contour calculation from being passed to _json,
+        # where NaNs had previously appeared as a misleading zero-valued curve.
+        response = _glow_area_response(settings, images)
         transform=freq_domain_c.Fw_FFT_C(response,{"wmin":float(min(w)),"wmax":float(1.2*max(w)),"eval_mode":"exact","parallel":False,"N_above_discard":7})
-        values.append(np.asarray(transform(w),complex)); responses.append(response)
+        value=np.asarray(transform(w),complex)
+        if not np.all(np.isfinite(value)):
+            raise FloatingPointError("both GLoW contour and area-integral calculations failed")
+        time=response.t_grid; take=np.unique(np.linspace(0,len(time)-1,display_points).astype(int))
+        return value, (time[take], response.It_grid[take]/(2*np.pi)), "GLoW area integral (contours unavailable)"
     delta=np.linalg.norm(values[-1]-values[-2])/max(np.linalg.norm(values[-1]),1e-20); time,response=responses[-1].t_grid,responses[-1].It_grid
     # GLoW calls this quantity I(t).  The conventional Ulmer--Goodman
     # delay density is F(t)=I(t)/(2 pi), matching the contour solver below.
@@ -322,9 +365,38 @@ def _glow(settings: Settings,w: np.ndarray,display_points: int,accuracy: float,i
     return values[-1], (time[take], response[take]/(2*np.pi)), f"GLoW FFT, Nt={levels[-1]} (Δ={delta:.2g})"
 
 
-def _bgo(settings: Settings,w: np.ndarray,order: int,images: list[dict[str,Any]]) -> tuple[np.ndarray,str]:
-    if settings.model not in BGO_MODELS: return _geometric(w,images),"Geometric series, K=0"
-    return bgo_amplification(w,settings.model,settings.source,strength=1.,shear=(settings.shear,0.),convergence=settings.convergence,order=order),f"BGO series, K={order}"
+def _bgo_delay_response(images: list[dict[str, Any]], display_points: int) -> tuple[np.ndarray, np.ndarray]:
+    """Analytic K=0 stationary-point part of the Ulmer--Goodman delay response.
+
+    A minimum contributes a step and a saddle a logarithmic singularity.  These
+    are the direct inverse-transform structures behind the BGO leading term,
+    shown on a finite grid only so that a plot can draw their divergence.  Terms
+    beyond K=0 are distributions obtained by repeated integration of these
+    functions, and are intentionally not misrepresented as a smooth F(t).
+    """
+    relative = np.array([image["tau"]-images[0]["tau"] for image in images])
+    final_time = max(4., 4*float(relative.max(initial=0.)))
+    count = max(256, display_points)
+    time = np.linspace(0., final_time, count)
+    spacing = final_time/max(count-1, 1)
+    density = np.zeros_like(time)
+    for image, delay in zip(images, relative):
+        weight = np.sqrt(abs(1/image["determinant"]))
+        if image["morse"] == 0:
+            density += weight*(time >= delay)
+        elif image["morse"] == 1:
+            # The logarithm is the saddle's analytic K=0 inverse transform.
+            density += -weight/np.pi*np.log(np.maximum(abs(time-delay), spacing/4))
+        else:
+            density += weight*(time <= delay)
+    return time, density
+
+
+def _bgo(settings: Settings,w: np.ndarray,order: int,images: list[dict[str,Any]],display_points: int) -> tuple[np.ndarray,tuple[np.ndarray,np.ndarray],str]:
+    delay = _bgo_delay_response(images, display_points)
+    if settings.model not in BGO_MODELS: return _geometric(w,images),delay,"Geometric series, K=0"
+    value=bgo_amplification(w,settings.model,settings.source,strength=1.,shear=(settings.shear,0.),convergence=settings.convergence,order=order)
+    return value,delay,f"BGO series, K={order}; analytic K=0 F(t)"
 
 
 def _analytic(settings: Settings,w: np.ndarray) -> np.ndarray:
@@ -443,7 +515,9 @@ def calculate(request: dict[str,Any]) -> dict[str,Any]:
     for name in request.get("solvers") or ["glow","bgo"]:
         try:
             if name=="glow": value,delay,label=_glow(settings,w,times,accuracy,images); curves[name]=_curve(value,label,delay)
-            elif name=="bgo": value,label=_bgo(settings,w,order,images); curves[name]=_curve(value,label)
+            elif name=="bgo":
+                value,delay,label=_bgo(settings,w,order,images,times)
+                curves[name]=_curve(value,label,delay)
             elif name=="analytic": curves[name]=_curve(_analytic(settings,w),"Analytic / semi-analytic")
             elif name=="series": curves[name]=_curve(_pm_field_series(settings,w),"PM field series")
             elif name=="uddeepta_raw":

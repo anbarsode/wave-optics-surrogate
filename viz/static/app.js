@@ -332,7 +332,7 @@ async function exportState() {
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Could not export this state");
-    setStatus("ready", `Saved viz/.states/${result.filename}`);
+    setStatus("ready", `Saved viz/saved_states/${result.filename}`);
   } catch (error) {
     setStatus("error", String(error.message || error));
   }
@@ -834,10 +834,15 @@ class CanvasPlot {
         if (kind === "amplitude") return curve.amplitude;
         if (kind === "phase") return curve.phase;
         if (kind === "amplitudeError") return curve.amplitude.map((value, i) => Math.abs(value - reference.amplitude[i]) / Math.max(reference.amplitude[i], 1e-9));
-        return curve.phase.map((value, i) => Math.abs(value - reference.phase[i]));
+        // Compare phases on the unit circle.  Subtracting separately unwrapped
+        // curves turns an otherwise zero phase difference into a false 2π jump.
+        return curve.real.map((real, i) => Math.atan2(
+          real * reference.imag[i] - curve.imag[i] * reference.real[i],
+          real * reference.real[i] + curve.imag[i] * reference.imag[i]
+        ));
       });
       const range = paddedRange(series.flat());
-      const label = {amplitude: "|F|", phase: "arg F", amplitudeError: "Δ|F|", phaseError: "Δ arg"}[kind];
+      const label = {amplitude: "|F|", phase: "arg F", amplitudeError: "Δ|F|", phaseError: "wrapped Δ arg"}[kind];
       drawSubplot(this.context, box, this.view.x0, this.view.x1, range[0], range[1], frequencyX, series, curves, label, row === rows - 1 ? "f [Hz]" : "", true);
     });
     drawCurveLegend(this.context, curves, this.width);

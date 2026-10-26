@@ -23,7 +23,7 @@ from viz.engine import calculate
 
 
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
-STATE_ROOT = Path(__file__).resolve().parent / ".states"
+STATE_ROOT = Path(__file__).resolve().parent / "saved_states"
 MIME_TYPES = {
     ".html": "text/html; charset=utf-8",
     ".css": "text/css; charset=utf-8",

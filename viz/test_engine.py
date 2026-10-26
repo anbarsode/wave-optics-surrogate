@@ -3,7 +3,7 @@
 import unittest
 import numpy as np
 
-from viz.engine import Settings, calculate
+from viz.engine import Settings, _unwrap_from_high_frequency, calculate
 
 
 def request(model="PM"):
@@ -37,6 +37,18 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(result["images"][0]["delay_seconds"], 0)
         self.assertEqual(len(result["frequency_hz"]), 48)
         self.assertTrue(np.all(np.isfinite(result["curves"]["bgo"]["amplitude"])))
+
+    def test_bgo_exposes_its_analytic_leading_delay_response(self):
+        curve = calculate(request("PM"))["curves"]["bgo"]
+        self.assertIn("analytic K=0 F(t)", curve["label"])
+        self.assertGreater(len(curve["delay"]), 32)
+        self.assertTrue(np.all(np.isfinite(curve["delay_density"])))
+
+    def test_phase_is_unwrapped_from_the_high_frequency_endpoint(self):
+        values = np.exp(1j*np.array([2.9, -3.0, -2.9]))
+        phase = _unwrap_from_high_frequency(values)
+        self.assertAlmostEqual(phase[-1], -2.9)
+        self.assertLess(abs(phase[0] - phase[1]), .5)
 
     def test_sis_calculation_returns_matching_sky_grid(self):
         result = calculate(request("SIS"))
