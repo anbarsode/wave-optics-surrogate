@@ -8,3 +8,4 @@ __pycache__
 *.npz
 *.csv
 decomposition/external_potential_tests_files/
+viz/saved_states
