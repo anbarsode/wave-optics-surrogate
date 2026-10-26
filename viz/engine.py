@@ -1,33 +1,15 @@
-"""Scientific calculations for the Gravitational Lensing visualizer.
+"""Calculations for the local Gravitational Lensing visualizer.
 
-The browser only draws the returned arrays.  All lens calculations live here so
-that additional Python solvers can be added without changing the plotting code.
-
-Dimensionless lensing follows the usual thin-lens equations
-
-    y = x - alpha(x),
-    tau(x, y) = |x-y|^2 / 2 - psi(x),
-    F(w) = w/(2 pi i) integral exp[i w tau(x, y)] d^2x.
-
-The point-mass potential is ``psi = b^2 log(|x|)`` and the singular isothermal
-sphere (SIS) potential is ``psi = b |x|``.  A quadratic external field adds
-convergence and two shear components.  The BGO implementation follows
-Takahashi (2004), Appendix B: https://arxiv.org/abs/astro-ph/0402165
+Coordinates use the point-mass Einstein angle from the redshifted mass and
+Planck18 distances.  GLoW supplies both I(t) and its regularised FFT: no
+time-domain curve in this module is made by manually Fourier transforming F(w).
 """
 
 from __future__ import annotations
 
 import os
-
-# Scientific libraries may otherwise start several worker threads.  The
-# visualizer is deliberately single-threaded by default, as requested.
-for _variable in (
-    "OMP_NUM_THREADS",
-    "OPENBLAS_NUM_THREADS",
-    "MKL_NUM_THREADS",
-    "NUMEXPR_NUM_THREADS",
-):
-    os.environ.setdefault(_variable, "1")
+for _name in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+    os.environ.setdefault(_name, "1")
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,410 +20,274 @@ import numpy as np
 from astropy.constants import G, M_sun, c
 from astropy.cosmology import Planck18
 from contourpy import contour_generator
+from scipy.integrate import cumulative_trapezoid
+from scipy.optimize import root
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from bgo.expansion import amplification as bgo_amplification
 
-from bgo.expansion import _image_data, amplification as bgo_amplification
-
-
-MODEL_NAMES = {"PM": "Point mass", "SIS": "Singular isothermal sphere"}
+MODELS = {
+    "PM": "Point mass", "SIS": "Singular isothermal sphere", "SIE": "Singular isothermal ellipsoid",
+    "CIS": "Cored isothermal sphere", "NFW": "Navarro–Frenk–White", "eNFW": "Elliptical NFW",
+    "EPL": "Elliptical power law", "Hernquist": "Hernquist",
+}
+GLOW_MODELS = {"PM", "SIS", "SIE", "CIS", "NFW"}
+BGO_MODELS = {"PM", "SIS"}
 
 
 @dataclass(frozen=True)
-class LensSettings:
-    """A single lens and source configuration from the interface."""
-
+class Settings:
     model: str
-    y: float
-    strength: float
+    source: np.ndarray
+    use_external: bool
     convergence: float
-    shear1: float
-    shear2: float
+    shear: float
     lens_redshift: float
     source_redshift: float
     redshifted_mass: float
+    axis_ratio: float
+    core_radius: float
+    scale_radius: float
+    concentration: float
+    slope: float
 
     @classmethod
-    def from_request(cls, request: dict[str, Any]) -> "LensSettings":
-        parameters = request.get("parameters", {})
+    def from_request(cls, request: dict[str, Any]) -> "Settings":
+        value = request.get("parameters", {})
         model = request.get("model", "PM")
-        if model not in MODEL_NAMES:
-            model = "PM"
-        lens_redshift = float(parameters.get("z_lens", 0.5))
-        source_redshift = max(float(parameters.get("z_source", 1.5)), lens_redshift + 0.01)
-        return cls(
-            model=model,
-            y=float(parameters.get("impact", 0.5)),
-            strength=float(parameters.get("strength", 1.0)),
-            convergence=float(parameters.get("convergence", 0.0)),
-            shear1=float(parameters.get("shear1", 0.0)),
-            shear2=float(parameters.get("shear2", 0.0)),
-            lens_redshift=lens_redshift,
-            source_redshift=source_redshift,
-            redshifted_mass=float(parameters.get("mass", 100.0)),
-        )
+        lens_redshift = float(value.get("z_lens", .5))
+        source_redshift = max(float(value.get("z_source", 1.5)), lens_redshift + .01)
+        use_external = bool(value.get("use_external", False))
+        convergence = max(0., float(value.get("convergence", 0.))) if use_external else 0.
+        # Positive projected mass gives kappa >= 0.  gamma < 1-kappa keeps the
+        # far-field mapping non-critical instead of extending multiple images to infinity.
+        shear = min(max(0., float(value.get("shear", 0.))), max(0., .98-convergence)) if use_external else 0.
+        return cls(model if model in MODELS else "PM",
+                   np.array([float(value.get("impact_x", .5)), float(value.get("impact_y", 0.))]),
+                   use_external, convergence, shear, lens_redshift, source_redshift,
+                   max(float(value.get("mass", 100.)), 1e-3),
+                   np.clip(float(value.get("axis_ratio", .8)), .2, 1.),
+                   np.clip(float(value.get("core_radius", .08)), .005, 1.),
+                   np.clip(float(value.get("scale_radius", .3)), .02, 4.),
+                   np.clip(float(value.get("concentration", 8.)), 2., 30.),
+                   np.clip(float(value.get("slope", 2.)), 1.2, 2.8))
 
     @property
-    def source(self) -> np.ndarray:
-        """Source position; circular models use a horizontal impact parameter."""
-        return np.array([self.y, 0.0])
-
-    @property
-    def shear(self) -> tuple[float, float]:
-        return self.shear1, self.shear2
-
-    @property
-    def lens_time_seconds(self) -> float:
-        """Return t_M = 4 G M_Lz / c^3 in seconds."""
-        return float(4 * G.value * self.redshifted_mass * M_sun.value / c.value**3)
+    def mass_seconds(self) -> float:
+        """4 G M_Lz / c^3, so dimensionless frequency is w=2 pi f t_M."""
+        return float(4*G.value*self.redshifted_mass*M_sun.value/c.value**3)
 
 
-def _safe_float_array(values: np.ndarray) -> list[float]:
-    """Convert an array to finite JSON numbers."""
-    return np.nan_to_num(values, nan=0.0, posinf=1e12, neginf=-1e12).astype(float).tolist()
+def _json(values: np.ndarray) -> list[float]:
+    return np.nan_to_num(np.asarray(values), nan=0., posinf=1e12, neginf=-1e12).astype(float).ravel().tolist()
 
 
-def _complex_curve(values: np.ndarray) -> dict[str, list[float]]:
-    values = np.asarray(values, dtype=complex)
-    return {
-        "real": _safe_float_array(values.real),
-        "imag": _safe_float_array(values.imag),
-        "amplitude": _safe_float_array(np.abs(values)),
-        "phase": _safe_float_array(np.unwrap(np.angle(values))),
-    }
+def _curve(values: np.ndarray, label: str, time: tuple[np.ndarray, np.ndarray] | None = None) -> dict[str, Any]:
+    values = np.asarray(values, complex)
+    output: dict[str, Any] = {"label": label, "real": _json(values.real), "imag": _json(values.imag),
+                              "amplitude": _json(abs(values)), "phase": _json(np.unwrap(np.angle(values)))}
+    if time is not None:
+        output["time"], output["time_response"] = _json(time[0]), _json(time[1])
+    return output
 
 
-def _geometric_amplification(w: np.ndarray, images: list[dict[str, Any]]) -> np.ndarray:
-    """Stationary-phase geometric-optics sum, referenced to the first image."""
-    reference = images[0]["tau"]
-    answer = np.zeros_like(w, dtype=complex)
-    for image in images:
-        answer += (
-            np.exp(1j * w * (image["tau"] - reference) - 0.5j * np.pi * image["morse"])
-            / np.sqrt(abs(image["determinant"]))
-        )
-    return answer
+class Profile:
+    """Dimensionless, axis-aligned profile potential with optional external field."""
+
+    def __init__(self, settings: Settings, maximum_radius: float):
+        self.s, self.maximum_radius = settings, maximum_radius
+        self.h_radius = self.h_potential = None
+        if settings.model == "Hernquist":
+            radius = np.geomspace(1e-7, maximum_radius*2+5, 8000)
+            self.h_radius = radius
+            self.h_potential = cumulative_trapezoid(self._hernquist_alpha(radius), radius, initial=0.)
+
+    def _nfw(self, radius: np.ndarray) -> np.ndarray:
+        from glow import lenses
+        lens = lenses.Psi_NFW({"psi0": self.s.concentration/8., "xs": self.s.scale_radius})
+        return lens.psi_x(np.maximum(radius, 1e-9))
+
+    def _hernquist_alpha(self, radius: np.ndarray) -> np.ndarray:
+        """Projected Hernquist deflection alpha=(1-F)/x, with x=r/a."""
+        x = np.maximum(np.asarray(radius)/self.s.scale_radius, 1e-8)
+        lower, upper = x < 1-1e-7, x > 1+1e-7
+        function = np.full_like(x, 1/3)
+        function[lower] = np.arccosh(1/x[lower])/np.sqrt(1-x[lower]**2)
+        function[upper] = np.arccos(1/x[upper])/np.sqrt(x[upper]**2-1)
+        return 1.5*(1-function)/x
+
+    def psi(self, x1: np.ndarray, x2: np.ndarray) -> np.ndarray:
+        r = np.hypot(x1, x2)
+        if self.s.model == "PM": value = np.log(np.maximum(r, 1e-8))
+        elif self.s.model == "SIS": value = r
+        elif self.s.model == "SIE": value = np.sqrt(self.s.axis_ratio*x1**2+x2**2/self.s.axis_ratio)
+        elif self.s.model == "CIS": value = np.sqrt(r**2+self.s.core_radius**2)
+        elif self.s.model == "NFW": value = self._nfw(r)
+        elif self.s.model == "eNFW": value = self._nfw(np.sqrt(self.s.axis_ratio*x1**2+x2**2/self.s.axis_ratio))
+        elif self.s.model == "EPL":
+            radius = np.sqrt(self.s.axis_ratio*x1**2+x2**2/self.s.axis_ratio)
+            exponent = 3-self.s.slope
+            value = radius**exponent/exponent
+        else:
+            value = np.interp(r, self.h_radius, self.h_potential)
+        if self.s.use_external:
+            value = value + .5*self.s.convergence*(x1**2+x2**2) + .5*self.s.shear*(x1**2-x2**2)
+        return value
+
+    def gradient(self, x: np.ndarray) -> np.ndarray:
+        step = 2e-5*max(1., np.linalg.norm(x)); x1, x2 = x
+        return np.array([(self.psi(x1+step, x2)-self.psi(x1-step, x2))/(2*step),
+                         (self.psi(x1, x2+step)-self.psi(x1, x2-step))/(2*step)], float)
+
+    def hessian(self, x: np.ndarray) -> np.ndarray:
+        step = 4e-4*max(1., np.linalg.norm(x)); x1, x2 = x; f = self.psi
+        h11 = (f(x1+step,x2)-2*f(x1,x2)+f(x1-step,x2))/step**2
+        h22 = (f(x1,x2+step)-2*f(x1,x2)+f(x1,x2-step))/step**2
+        h12 = (f(x1+step,x2+step)-f(x1+step,x2-step)-f(x1-step,x2+step)+f(x1-step,x2-step))/(4*step**2)
+        return np.array([[h11,h12],[h12,h22]], float)
 
 
-def _exact_or_semianalytic(settings: LensSettings, w: np.ndarray) -> np.ndarray:
-    """Use GLoW's analytic PM or semianalytic radial SIS calculation.
-
-    Non-zero shear requires GLoW's substantially slower contour calculation.
-    The visualizer exposes that separately as the ``glow`` solver; this quick
-    radial solver therefore applies the mass-sheet transformation only.
-    """
-    from glow import freq_domain_c
-
-    scale = max(1.0 - settings.convergence, 1e-5)
-    if settings.model == "PM":
-        # x = sqrt(m/a) u, with a=1-kappa, gives the unit point-lens
-        # problem at w'=m w and y'=y/sqrt(m a).  The integration measure
-        # contributes the remaining factor 1/a.
-        transformed_y = settings.y / np.sqrt(settings.strength * scale)
-        solver = freq_domain_c.Fw_AnalyticPointLens_C(transformed_y, {"parallel": False})
-        values = solver(w * settings.strength)
-    else:
-        transformed_y = settings.y / np.sqrt(scale)
-        solver = freq_domain_c.Fw_SemiAnalyticSIS_C(
-            transformed_y,
-            {"parallel": False},
-            psi0=settings.strength / np.sqrt(scale),
-        )
-        values = solver(w)
-    return np.asarray(values, dtype=complex) / scale
+def _solve_images(profile: Profile, settings: Settings, span: float) -> list[dict[str, Any]]:
+    """Stationary points from a seed grid, classified by the Fermat Hessian."""
+    images: list[dict[str, Any]] = []
+    for x1 in np.linspace(-span, span, 13):
+        for x2 in np.linspace(-span, span, 13):
+            solution = root(lambda x: x-profile.gradient(x)-settings.source, [x1, x2])
+            if not solution.success or np.linalg.norm(solution.fun) > 2e-6 or np.linalg.norm(solution.x) > 3*span:
+                continue
+            # The logarithmic point-mass potential is singular at the origin.
+            # Finite differencing creates a nonphysical stationary point there.
+            if settings.model == "PM" and np.linalg.norm(solution.x) < 1e-4:
+                continue
+            if any(np.linalg.norm(solution.x-item["x"]) < 2e-4 for item in images): continue
+            matrix = np.eye(2)-profile.hessian(solution.x); determinant = float(np.linalg.det(matrix))
+            eigenvalue, eigenvector = np.linalg.eigh(matrix); morse = int(np.count_nonzero(eigenvalue < 0))
+            stretch = 1/np.maximum(abs(eigenvalue), 1e-5); major = int(np.argmax(stretch))
+            images.append({"x": solution.x, "tau": float(.5*np.sum((solution.x-settings.source)**2)-profile.psi(*solution.x)),
+                           "determinant": determinant, "morse": morse,
+                           "shape": {"angle": float(np.arctan2(eigenvector[1,major], eigenvector[0,major])),
+                                     "major": float(np.clip(stretch[major],.35,8)), "minor": float(np.clip(stretch[1-major],.35,8))}})
+    return sorted(images, key=lambda item: item["tau"])
 
 
-def _glow_reference(
-    settings: LensSettings,
-    w: np.ndarray,
-    tolerance: float,
-    time_budget: float,
-) -> np.ndarray:
-    """Evaluate the repository's resolution-checked GLoW wrapper."""
-    from bgo.adaptive_reference import adaptive_glow_reference
-
-    values, _, _ = adaptive_glow_reference(
-        settings.model,
-        settings.source,
-        settings.strength,
-        settings.shear,
-        settings.convergence,
-        w,
-        relative_l2_limit=tolerance,
-        seconds_per_array=time_budget,
-    )
-    return np.asarray(values, dtype=complex)
-
-
-def _time_response(w: np.ndarray, values: np.ndarray, samples: int) -> tuple[np.ndarray, np.ndarray]:
-    """Return a real positive-frequency inverse transform of ``F(w)-1``.
-
-    The sampled response is
-
-        F_t(t) = Re[ integral (F(w)-1) exp(-i w t) dw / pi ].
-
-    This is intended for solver comparison.  The removed constant corresponds
-    to the unlensed delta function at t=0.  A direct trapezoidal transform is
-    used because the frequency grid is logarithmic.
-    """
-    samples = int(np.clip(samples, 64, 320))
-    delay_scale = 2 * np.pi / max(float(np.min(w)), 1e-6)
-    t = np.linspace(0.0, min(delay_scale, 80.0), samples)
-    phase = np.exp(-1j * np.outer(t, w))
-    response = np.trapz(phase * (values - 1.0), w, axis=1).real / np.pi
-    return t, response
-
-
-def _image_type(morse: int) -> str:
-    return ("minimum", "saddle", "maximum")[int(np.clip(morse, 0, 2))]
-
-
-def _image_shape(settings: LensSettings, position: np.ndarray) -> dict[str, float]:
-    """Return the local image ellipse produced from a small circular source.
-
-    For a source-plane displacement ``dy``, the image displacement is
-    ``dx = A^-1 dy``, where ``A = d y / d x`` is the lens-mapping Jacobian.
-    Its orthogonal eigenvectors therefore give the ellipse orientation and
-    its inverse eigenvalues give the two stretch factors.
-    """
-    x1, x2 = np.asarray(position, dtype=float)
-    radius = max(float(np.hypot(x1, x2)), 1e-8)
-    if settings.model == "PM":
-        p11 = settings.strength * (radius**2 - 2 * x1**2) / radius**4
-        p22 = settings.strength * (radius**2 - 2 * x2**2) / radius**4
-        p12 = -2 * settings.strength * x1 * x2 / radius**4
-    else:
-        p11 = settings.strength * x2**2 / radius**3
-        p22 = settings.strength * x1**2 / radius**3
-        p12 = -settings.strength * x1 * x2 / radius**3
-    jacobian = np.array([
-        [1 - p11 - settings.convergence - settings.shear1, -p12 - settings.shear2],
-        [-p12 - settings.shear2, 1 - p22 - settings.convergence + settings.shear1],
-    ])
-    eigenvalues, eigenvectors = np.linalg.eigh(jacobian)
-    stretches = 1 / np.maximum(np.abs(eigenvalues), 1e-4)
-    major_index = int(np.argmax(stretches))
-    vector = eigenvectors[:, major_index]
-    return {
-        "angle": float(np.arctan2(vector[1], vector[0])),
-        "major": float(np.clip(stretches[major_index], 0.35, 7.0)),
-        "minor": float(np.clip(stretches[1 - major_index], 0.35, 7.0)),
-    }
-
-
-def _geometry(settings: LensSettings, order: int) -> list[dict[str, Any]]:
-    """Return the ordinary images found by the repository BGO lens solver."""
-    return _image_data(
-        settings.model,
-        settings.source,
-        settings.strength,
-        settings.shear,
-        max(0, order),
-        settings.convergence,
-    )
-
-
-def _field(settings: LensSettings, resolution: int) -> dict[str, Any]:
-    """Sample lens-plane maps, contours, critical curves, and caustics."""
-    resolution = int(np.clip(resolution, 48, 180))
-    span = max(2.6, 1.8 * (settings.strength + abs(settings.y) + 0.5))
-    axis = np.linspace(-span, span, resolution)
-    x1, x2 = np.meshgrid(axis, axis)
-    radius2 = x1**2 + x2**2
-    radius = np.sqrt(radius2)
-    radius_safe = np.maximum(radius, 2 * span / resolution)
-
-    if settings.model == "PM":
-        lens_potential = settings.strength * np.log(radius_safe)
-        radial_factor = settings.strength / radius_safe**2
-        # Hessian of psi = b^2 log(r).
-        p11 = settings.strength * (radius_safe**2 - 2 * x1**2) / radius_safe**4
-        p22 = settings.strength * (radius_safe**2 - 2 * x2**2) / radius_safe**4
-        p12 = -2 * settings.strength * x1 * x2 / radius_safe**4
-    else:
-        lens_potential = settings.strength * radius_safe
-        radial_factor = settings.strength / radius_safe
-        p11 = settings.strength * x2**2 / radius_safe**3
-        p22 = settings.strength * x1**2 / radius_safe**3
-        p12 = -settings.strength * x1 * x2 / radius_safe**3
-
-    external_potential = (
-        0.5 * settings.convergence * radius2
-        + 0.5 * settings.shear1 * (x1**2 - x2**2)
-        + settings.shear2 * x1 * x2
-    )
-    alpha1 = radial_factor * x1 + (settings.convergence + settings.shear1) * x1 + settings.shear2 * x2
-    alpha2 = radial_factor * x2 + (settings.convergence - settings.shear1) * x2 + settings.shear2 * x1
-    source1 = x1 - alpha1
-    source2 = x2 - alpha2
-
-    a11 = 1.0 - p11 - settings.convergence - settings.shear1
-    a22 = 1.0 - p22 - settings.convergence + settings.shear1
-    a12 = -p12 - settings.shear2
-    determinant = a11 * a22 - a12**2
-    magnification = np.divide(1.0, determinant, out=np.full_like(determinant, 1e12), where=np.abs(determinant) > 1e-12)
-
-    total_potential = lens_potential + external_potential
-    delay = 0.5 * ((x1 - settings.y) ** 2 + x2**2) - total_potential
-    residual = np.hypot(settings.y - x1 + alpha1, -x2 + alpha2)
-
-    critical_segments = _contour_segments(axis, determinant, [0.0])
-    caustic_segments = []
-    for segment in critical_segments:
-        points = np.asarray(segment["points"])
-        px, py = points[:, 0], points[:, 1]
-        pr = np.maximum(np.hypot(px, py), 2 * span / resolution)
-        factor = settings.strength / (pr**2 if settings.model == "PM" else pr)
-        sa1 = factor * px + (settings.convergence + settings.shear1) * px + settings.shear2 * py
-        sa2 = factor * py + (settings.convergence - settings.shear1) * py + settings.shear2 * px
-        caustic_segments.append({"level": 0.0, "points": np.column_stack((px - sa1, py - sa2)).tolist()})
-
-    stride = max(3, resolution // 20)
-    mapped_cells: list[list[list[float]]] = []
-    for row in range(0, resolution - stride, stride):
-        for column in range(0, resolution - stride, stride):
-            corners = ((row, column), (row, column + stride), (row + stride, column + stride), (row + stride, column))
-            if any(determinant[i, j] < 0 for i, j in corners):
-                mapped_cells.append([[float(source1[i, j]), float(source2[i, j])] for i, j in corners])
-
-    return {
-        "extent": [-span, span, -span, span],
-        "resolution": resolution,
-        "delay": _safe_float_array(delay.ravel()),
-        "log_magnification": _safe_float_array(np.clip(np.log10(np.abs(magnification) + 1e-10), -1, 3).ravel()),
-        "negative": (determinant < 0).astype(np.uint8).ravel().tolist(),
-        "residual": _safe_float_array(np.clip(np.log10(residual + 1e-5), -5, 1).ravel()),
-        "critical": critical_segments,
-        "caustic": caustic_segments,
-        "mapped_cells": mapped_cells,
-    }
-
-
-def _contour_segments(axis: np.ndarray, values: np.ndarray, levels: list[float]) -> list[dict[str, Any]]:
-    """Convert contourpy lines to compact JSON-friendly point lists."""
-    generator = contour_generator(x=axis, y=axis, z=values)
-    answer: list[dict[str, Any]] = []
+def _segments(axis: np.ndarray, values: np.ndarray, levels: list[float]) -> list[dict[str, Any]]:
+    maker, answer = contour_generator(x=axis, y=axis, z=values), []
     for level in levels:
-        for line in generator.lines(level):
-            if len(line) >= 2:
-                answer.append({"level": float(level), "points": np.asarray(line)[::2].tolist()})
+        for line in maker.lines(level):
+            if len(line) > 1: answer.append({"level": float(level), "points": np.asarray(line)[::2].tolist()})
     return answer
 
 
-def _cosmology(settings: LensSettings) -> dict[str, float]:
-    """Planck18 distances and an equivalent point-mass Einstein angle."""
-    d_l = Planck18.angular_diameter_distance(settings.lens_redshift).value
-    d_s = Planck18.angular_diameter_distance(settings.source_redshift).value
-    d_ls = Planck18.angular_diameter_distance_z1z2(settings.lens_redshift, settings.source_redshift).value
-    physical_mass = settings.redshifted_mass / (1 + settings.lens_redshift) * M_sun.value
-    mpc = 3.085677581491367e22
-    theta = np.sqrt(4 * G.value * physical_mass / c.value**2 * (d_ls * mpc) / ((d_l * mpc) * (d_s * mpc)))
-    return {
-        "d_l_mpc": float(d_l),
-        "d_s_mpc": float(d_s),
-        "d_ls_mpc": float(d_ls),
-        "theta_e_mas": float(np.degrees(theta) * 3.6e6),
-        "lens_time_seconds": settings.lens_time_seconds,
-    }
+def _field(profile: Profile, settings: Settings, images: list[dict[str, Any]], resolution: int) -> dict[str, Any]:
+    span = profile.maximum_radius; axis = np.linspace(-span, span, resolution); x1, x2 = np.meshgrid(axis, axis); spacing = axis[1]-axis[0]
+    psi = profile.psi(x1,x2); gy,gx = np.gradient(psi, spacing, spacing, edge_order=2)
+    h11 = np.gradient(gx,spacing,axis=1,edge_order=2); h22 = np.gradient(gy,spacing,axis=0,edge_order=2)
+    h12 = .5*(np.gradient(gx,spacing,axis=0,edge_order=2)+np.gradient(gy,spacing,axis=1,edge_order=2))
+    sy,sx = x2-gy, x1-gx; determinant = (1-h11)*(1-h22)-h12**2
+    magnification = np.divide(1.,determinant,out=np.zeros_like(determinant),where=abs(determinant)>1e-10)
+    delay = .5*((x1-settings.source[0])**2+(x2-settings.source[1])**2)-psi; reference = images[0]["tau"]
+    residual = np.hypot(settings.source[0]-sx, settings.source[1]-sy); critical = _segments(axis, determinant, [0.]); caustic=[]
+    for segment in critical:
+        points=np.asarray(segment["points"]); ix=np.clip(np.searchsorted(axis,points[:,0]),0,resolution-1); iy=np.clip(np.searchsorted(axis,points[:,1]),0,resolution-1)
+        caustic.append({"level":0.,"points":np.column_stack((points[:,0]-gx[iy,ix],points[:,1]-gy[iy,ix])).tolist()})
+    negative=determinant<0; stride=max(3,resolution//22); cells=[]
+    for row in range(0,resolution-stride,stride):
+        for column in range(0,resolution-stride,stride):
+            corners=((row,column),(row,column+stride),(row+stride,column+stride),(row+stride,column))
+            if any(negative[i,j] for i,j in corners): cells.append([[float(sx[i,j]),float(sy[i,j])] for i,j in corners])
+    # The multiple-image region has to be measured in the source plane, not
+    # by simply adding its lens-plane pixels.  Map every negative-parity cell
+    # to its four source-plane corners and add its (absolute) polygon area.
+    # This is the finite-cell version of dA_source = |det A| dA_lens.
+    source_area = 0.
+    for row in range(resolution-1):
+        for column in range(resolution-1):
+            if np.mean(negative[row:row+2, column:column+2]) < .5:
+                continue
+            polygon = np.array([[sx[row,column], sy[row,column]], [sx[row,column+1], sy[row,column+1]],
+                                [sx[row+1,column+1], sy[row+1,column+1]], [sx[row+1,column], sy[row+1,column]]])
+            source_area += .5*abs(np.dot(polygon[:,0], np.roll(polygon[:,1], -1)) - np.dot(polygon[:,1], np.roll(polygon[:,0], -1)))
+    maximum=max((image["tau"]-reference for image in images),default=.25); edge=bool(np.any(negative[[0,-1],:]) or np.any(negative[:,[0,-1]]))
+    return {"extent":[-span,span,-span,span],"resolution":resolution,"delay":_json(delay-reference),
+            "log_magnification":_json(np.clip(np.log10(abs(magnification)+1e-10),-1,3)),"negative":negative.astype(np.uint8).ravel().tolist(),
+            "residual":_json(np.clip(np.log10(residual+1e-6),-6,1)),"critical":critical,"caustic":caustic,"mapped_cells":cells,
+            "delay_contours":_segments(axis,delay-reference,np.linspace(0,max(.25,2*maximum),7).tolist()),
+            "multiple_image_radius":np.inf if edge else float(np.sqrt(source_area/np.pi)),"multiple_image_infinite":edge}
 
 
-def calculate(request: dict[str, Any]) -> dict[str, Any]:
-    """Calculate every selected visualization from one interface state."""
-    settings = LensSettings.from_request(request)
-    solver_settings = request.get("solver_settings", {})
-    n_frequency = int(np.clip(solver_settings.get("frequency_samples", 140), 48, 360))
-    sky_resolution = int(np.clip(solver_settings.get("sky_resolution", 90), 48, 180))
-    bgo_order = int(np.clip(solver_settings.get("bgo_order", 2), 0, 10))
-    time_samples = int(np.clip(solver_settings.get("time_samples", 140), 64, 320))
-    tolerance = float(solver_settings.get("glow_tolerance", 0.02))
-    time_budget = float(solver_settings.get("glow_budget", 2.0))
+def _geometric(w: np.ndarray, images: list[dict[str, Any]]) -> np.ndarray:
+    answer=np.zeros_like(w,complex); reference=images[0]["tau"]
+    for item in images: answer += np.exp(1j*w*(item["tau"]-reference)-.5j*np.pi*item["morse"])/np.sqrt(abs(item["determinant"]))
+    return answer
 
-    parameters = request.get("parameters", {})
-    f_min = max(float(parameters.get("f_min", 10.0)), 1e-3)
-    f_max = max(float(parameters.get("f_max", 1000.0)), f_min * 1.01)
-    frequency = np.geomspace(f_min, f_max, n_frequency)
-    w = 2 * np.pi * frequency * settings.lens_time_seconds
-    # BGO is asymptotic and becomes singular at zero.  A small positive floor
-    # keeps every solver finite when a very low physical frequency is selected.
-    w_safe = np.maximum(w, 1e-4)
 
-    images = _geometry(settings, bgo_order)
-    if not images:
-        raise ValueError("No geometric-optics images were found for these parameters")
+def _glow_lens(settings: Settings):
+    """Rotate the whole axis-aligned system into GLoW's source-axis frame."""
+    if settings.model not in GLOW_MODELS: raise ValueError(f"GLoW has no {MODELS[settings.model]} lens class")
+    from glow import lenses
+    phi=np.arctan2(settings.source[1],settings.source[0]); y=float(np.hypot(*settings.source))
+    if settings.model=="PM": base=lenses.Psi_PointLens({"psi0":1.})
+    elif settings.model=="SIS": base=lenses.Psi_SIS({"psi0":1.})
+    elif settings.model=="SIE": base=lenses.Psi_eSIS({"psi0":1.,"q":settings.axis_ratio,"alpha":-phi})
+    elif settings.model=="CIS": base=lenses.Psi_CIS({"psi0":1.,"rc":settings.core_radius})
+    else: base=lenses.Psi_NFW({"psi0":settings.concentration/8.,"xs":settings.scale_radius})
+    if not settings.use_external: return base,y
+    ext=lenses.Psi_Ext({"kappa":settings.convergence,"gamma1":settings.shear*np.cos(2*phi),"gamma2":-settings.shear*np.sin(2*phi)})
+    return lenses.CombinedLens({"lenses":[base,ext]}),y
 
-    selected_solvers = request.get("solvers") or ["exact", "bgo"]
-    curves: dict[str, dict[str, Any]] = {}
-    messages: list[str] = []
-    for solver_name in selected_solvers:
+
+def _glow(settings: Settings,w: np.ndarray,display_points: int,accuracy: float,images: list[dict[str,Any]]) -> tuple[np.ndarray,tuple[np.ndarray,np.ndarray],str]:
+    """Reference GLoW response plus regularised FFT; paired resolutions check convergence."""
+    from glow import freq_domain_c,time_domain_c
+    lens,y=_glow_lens(settings); tolerance=10**accuracy
+    levels=(16000,20000) if tolerance<=.008 else ((8000,12000) if tolerance<=.03 else (3000,4500)); values=[]; responses=[]
+    four_pm=settings.model=="PM" and settings.use_external and len(images)>=4
+    for nt in levels:
+        if four_pm:
+            response=time_domain_c.It_AreaIntegral_C(lens,y,{"n_rho":40000 if nt==levels[0] else 80000,"n_theta":4000,"Nt":20000,"tmax":1000,"parallel":False})
+        else:
+            integral=time_domain_c.It_SingleIntegral_C if lens.isAxisym else time_domain_c.It_MultiContour_C
+            response=integral(lens,y,{"Nt":nt,"tmax":1e4,"parallel":False})
+        transform=freq_domain_c.Fw_FFT_C(response,{"wmin":float(min(w)),"wmax":float(1.2*max(w)),"eval_mode":"exact","parallel":False,"N_above_discard":7})
+        values.append(np.asarray(transform(w),complex)); responses.append(response)
+    delta=np.linalg.norm(values[-1]-values[-2])/max(np.linalg.norm(values[-1]),1e-20); time,response=responses[-1].t_grid,responses[-1].It_grid
+    take=np.unique(np.linspace(0,len(time)-1,display_points).astype(int)); return values[-1],(time[take],response[take]),f"GLoW FFT, Nt={levels[-1]} (Δ={delta:.2g})"
+
+
+def _bgo(settings: Settings,w: np.ndarray,order: int,images: list[dict[str,Any]]) -> tuple[np.ndarray,str]:
+    if settings.model not in BGO_MODELS: return _geometric(w,images),"Geometric series, K=0"
+    return bgo_amplification(w,settings.model,settings.source,strength=1.,shear=(settings.shear,0.),convergence=settings.convergence,order=order),f"BGO series, K={order}"
+
+
+def _analytic(settings: Settings,w: np.ndarray) -> np.ndarray:
+    from glow import freq_domain_c
+    y=float(np.hypot(*settings.source))
+    if settings.model=="PM" and not settings.use_external: return np.asarray(freq_domain_c.Fw_AnalyticPointLens_C(y,{"parallel":False})(w),complex)
+    if settings.model=="SIS" and not settings.use_external: return np.asarray(freq_domain_c.Fw_SemiAnalyticSIS_C(y,{"parallel":False})(w),complex)
+    raise ValueError("analytic solver is available for isolated point-mass and SIS lenses")
+
+
+def _cosmology(settings: Settings,field: dict[str,Any]) -> dict[str,Any]:
+    dl=Planck18.angular_diameter_distance(settings.lens_redshift).value; ds=Planck18.angular_diameter_distance(settings.source_redshift).value; dls=Planck18.angular_diameter_distance_z1z2(settings.lens_redshift,settings.source_redshift).value
+    mass=settings.redshifted_mass/(1+settings.lens_redshift)*M_sun.value; mpc=3.085677581491367e22; scale=np.sqrt(4*G.value*mass/c.value**2*dls*mpc/(dl*mpc*ds*mpc)); radius=field["multiple_image_radius"]
+    return {"theta_mi_mas":float(np.degrees(scale*radius)*3.6e6) if np.isfinite(radius) else np.inf,"theta_mi_infinite":bool(field["multiple_image_infinite"]),"lens_time_seconds":settings.mass_seconds}
+
+
+def calculate(request: dict[str,Any]) -> dict[str,Any]:
+    settings=Settings.from_request(request); option=request.get("solver_settings",{}); points=int(np.clip(option.get("frequency_samples",128),32,1024)); grid=int(np.clip(option.get("sky_resolution",128),32,1024)); times=int(np.clip(option.get("time_samples",128),32,1024)); order=int(np.clip(option.get("bgo_order",0),0,10)); accuracy=float(np.clip(option.get("glow_accuracy",-2.),-3.,-1.)); p=request.get("parameters",{})
+    fmin=max(float(p.get("f_min",10.)),1e-3); fmax=max(float(p.get("f_max",1000.)),fmin*1.01); frequency=np.geomspace(fmin,fmax,points); w=np.maximum(2*np.pi*frequency*settings.mass_seconds,1e-5)
+    span=max(3.,1.8+1.4*np.linalg.norm(settings.source)+2*settings.scale_radius); profile=Profile(settings,span); images=_solve_images(profile,settings,span)
+    if not images: raise ValueError("No stationary images were found; try a weaker external field")
+    field=_field(profile,settings,images,grid); curves={}; messages=[]
+    for name in request.get("solvers") or ["glow","bgo"]:
         try:
-            if solver_name == "geometric":
-                values = _geometric_amplification(w_safe, images)
-                label = "Geometric optics"
-            elif solver_name == "bgo":
-                values = bgo_amplification(
-                    w_safe,
-                    settings.model,
-                    settings.source,
-                    strength=settings.strength,
-                    shear=settings.shear,
-                    order=bgo_order,
-                    convergence=settings.convergence,
-                )
-                label = f"BGO order {bgo_order}"
-            elif solver_name == "glow":
-                values = _glow_reference(settings, w_safe, tolerance, time_budget)
-                label = "GLoW reference"
-            else:
-                values = _exact_or_semianalytic(settings, w_safe)
-                label = "Analytic" if settings.model == "PM" else "Semianalytic SIS"
-                if abs(settings.shear1) + abs(settings.shear2) > 0:
-                    messages.append(f"{label} is radial and does not include the selected shear; choose GLoW or BGO for shear.")
-            curve = _complex_curve(values)
-            t, response = _time_response(w_safe, values, time_samples)
-            curve["time"] = _safe_float_array(t)
-            curve["time_response"] = _safe_float_array(response)
-            curve["label"] = label
-            curves[solver_name] = curve
-        except Exception as error:
-            # One expensive solver should not prevent the remaining panels from
-            # updating.  The compact status line reports the scientific reason.
-            messages.append(f"{solver_name}: {error}")
-
-    first_delay = images[0]["tau"]
-    image_rows = []
-    for index, image in enumerate(images):
-        hessian_magnification = 1.0 / image["determinant"]
-        image_rows.append({
-            "order": index + 1,
-            "x": np.asarray(image["x"], dtype=float).tolist(),
-            "magnification": float(hessian_magnification),
-            "log_magnification": float(np.clip(np.log10(abs(hessian_magnification) + 1e-12), -1, 3)),
-            "type": _image_type(image["morse"]),
-            "delay_dimensionless": float(image["tau"] - first_delay),
-            "delay_seconds": float((image["tau"] - first_delay) * settings.lens_time_seconds),
-            "shape": _image_shape(settings, image["x"]),
-        })
-
-    field = _field(settings, sky_resolution)
-    maximum_delay = max((row["delay_dimensionless"] for row in image_rows), default=1.0)
-    contour_maximum = max(2 * maximum_delay, 0.25)
-    axis = np.linspace(field["extent"][0], field["extent"][1], field["resolution"])
-    delay_grid = np.asarray(field["delay"]).reshape(field["resolution"], field["resolution"])
-    relative_delay_grid = delay_grid - first_delay
-    field["delay"] = _safe_float_array(relative_delay_grid.ravel())
-    field["delay_contours"] = _contour_segments(axis, relative_delay_grid, np.linspace(0, contour_maximum, 7).tolist())
-
-    return {
-        "model": settings.model,
-        "model_name": MODEL_NAMES[settings.model],
-        "frequency_hz": _safe_float_array(frequency),
-        "w": _safe_float_array(w),
-        "curves": curves,
-        "images": image_rows,
-        "source": settings.source.tolist(),
-        "field": field,
-        "cosmology": _cosmology(settings),
-        "messages": messages,
-    }
+            if name=="glow": value,time,label=_glow(settings,w,times,accuracy,images); curves[name]=_curve(value,label,time)
+            elif name=="bgo": value,label=_bgo(settings,w,order,images); curves[name]=_curve(value,label)
+            elif name=="analytic": curves[name]=_curve(_analytic(settings,w),"Analytic radial solution")
+        except Exception as error: messages.append(f"{name}: {error}")
+    reference=images[0]["tau"]; names=("minimum","saddle","maximum"); rows=[]
+    for index,item in enumerate(images,1):
+        magnification=1/item["determinant"]; rows.append({"order":index,"x":item["x"].tolist(),"magnification":float(magnification),"log_magnification":float(np.clip(np.log10(abs(magnification)),-1,3)),"type":names[min(item["morse"],2)],"delay_dimensionless":float(item["tau"]-reference),"delay_seconds":float((item["tau"]-reference)*settings.mass_seconds),"shape":item["shape"]})
+    return {"model":settings.model,"model_name":MODELS[settings.model],"frequency_hz":_json(frequency),"w":_json(w),"curves":curves,"images":rows,"source":settings.source.tolist(),"field":field,"cosmology":_cosmology(settings,field),"messages":messages,"glow_accuracy":{"target_relative_l2":10**accuracy,"nominal_seconds":float(np.clip(.25/10**accuracy,.5,8.))}}

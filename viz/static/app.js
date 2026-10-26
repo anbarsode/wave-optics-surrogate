@@ -1,41 +1,41 @@
 "use strict";
 
-const SOLVER_DEFINITIONS = {
-  PM: [
-    ["exact", "Analytic point lens", "Closed radial point-mass solution, with mass-sheet scaling."],
-    ["bgo", "Beyond geometric optics", "Stationary-phase expansion through the chosen BGO order."],
-    ["glow", "GLoW reference", "Resolution-checked GLoW calculation; shear can make this slower."],
-    ["geometric", "Geometric optics", "High-frequency sum over stationary images."],
-  ],
-  SIS: [
-    ["exact", "Semianalytic SIS", "GLoW radial SIS solver, with mass-sheet scaling."],
-    ["bgo", "Beyond geometric optics", "Stationary-phase images plus the SIS centre term."],
-    ["glow", "GLoW reference", "Resolution-checked GLoW calculation; shear can make this slower."],
-    ["geometric", "Geometric optics", "High-frequency sum over stationary images."],
-  ],
-};
+const GLOW_MODELS = new Set(["PM", "SIS", "SIE", "CIS", "NFW"]);
+const BGO_MODELS = new Set(["PM", "SIS"]);
+function availableSolvers() {
+  const answer = [["bgo", BGO_MODELS.has(state.model) ? "BGO series" : "Geometric optics (BGO K=0)", BGO_MODELS.has(state.model) ? "The BGO expansion. Order zero is the geometric-optics result." : "The order-zero stationary-image sum for this profile."]];
+  if (GLOW_MODELS.has(state.model)) answer.unshift(["glow", "GLoW reference", "GLoW's numerical time-domain response and its own regularised FFT."]);
+  if (state.model === "PM" || state.model === "SIS") answer.push(["analytic", "Analytic helper solution", "Closed point-mass or SIS helper-function solution for an isolated circular lens."]);
+  return answer;
+}
 
 const SOLVER_CONTROLS = [
-  {id: "frequency_samples", label: "FREQUENCY POINTS", min: 48, max: 320, step: 8, value: 144, unit: "", tip: "Number of logarithmically spaced frequencies. More points give smoother curves but take longer."},
-  {id: "sky_resolution", label: "SKY GRID", min: 48, max: 180, step: 6, value: 90, unit: "²", tip: "Number of lens-plane samples along each direction used for maps and contours."},
-  {id: "bgo_order", label: "BGO ORDER", min: 0, max: 10, step: 1, value: 2, unit: "", tip: "Highest inverse-frequency correction kept beyond geometric optics."},
-  {id: "time_samples", label: "TIME POINTS", min: 64, max: 280, step: 8, value: 144, unit: "", tip: "Number of samples used for the displayed inverse transform F(t)."},
-  {id: "glow_tolerance", label: "GLOW ERROR", min: -3, max: -1, step: 0.1, value: -1.7, unit: "", tip: "Target relative L2 agreement between consecutive GLoW resolutions." , transform: v => 10 ** v, format: v => (10 ** v).toPrecision(2)},
-  {id: "glow_budget", label: "GLOW BUDGET", min: 0.5, max: 8, step: 0.5, value: 2, unit: " s", tip: "Maximum preferred time for one complete GLoW frequency-array evaluation."},
+  {id: "bgo_order", label: "BGO ORDER", min: 0, max: 10, step: 1, value: 0, unit: "", tip: "Order zero is geometric optics. Higher orders add series corrections whenever BGO supports them."},
+  {id: "glow_accuracy", label: "GLOW ERROR", min: -3, max: -1, step: .1, value: -2.2, unit: "", tip: "Target agreement between two GLoW resolutions. It also chooses the matching time budget: tighter error means more time.", format: v => `${(10 ** v).toPrecision(2)} · ${formatNumber(Math.min(8, Math.max(.5, .25 / 10 ** v)))} s`},
 ];
 
 const PARAMETER_CONTROLS = [
-  {id: "impact", label: "IMPACT y", min: 0.05, max: 2.5, step: 0.01, value: 0.5, unit: "", tip: "Horizontal source position in units of the lens scale. Smaller values mean closer alignment."},
-  {id: "strength", label: "PROFILE b", min: 0.2, max: 2, step: 0.02, value: 1, unit: "", tip: "Dimensionless strength of the circular point-mass or SIS profile."},
-  {id: "convergence", label: "CONVERGENCE κ", min: -0.2, max: 0.6, step: 0.01, value: 0, unit: "", tip: "Uniform focusing from the surrounding lens environment."},
-  {id: "shear1", label: "SHEAR γ₁", min: -0.35, max: 0.35, step: 0.01, value: 0, unit: "", tip: "First component of external tidal stretching, aligned with the horizontal and vertical axes."},
-  {id: "shear2", label: "SHEAR γ₂", min: -0.35, max: 0.35, step: 0.01, value: 0, unit: "", tip: "Second component of external tidal stretching, oriented at 45 degrees."},
-  {id: "z_lens", label: "LENS REDSHIFT", min: 0.01, max: 3, step: 0.01, value: 0.5, unit: "", tip: "Cosmological redshift of the lens. Planck18 is used for angular-diameter distances."},
-  {id: "z_source", label: "SOURCE REDSHIFT", min: 0.05, max: 8, step: 0.05, value: 1.5, unit: "", tip: "Cosmological redshift of the source; it should be larger than the lens redshift."},
-  {id: "mass", label: "LENS MASS M_Lz", min: 0, max: 7, step: 0.05, value: 2, unit: "", tip: "Total lens mass multiplied by (1 + lens redshift), in solar masses. It converts f to dimensionless w.", transform: v => 10 ** v, format: v => `${formatNumber(10 ** v)} M☉`},
-  {id: "f_min", label: "GW f MIN", min: -1, max: 3, step: 0.05, value: 1, unit: "", tip: "Lowest gravitational-wave frequency shown. The mass converts this value to w.", transform: v => 10 ** v, format: v => formatFrequency(10 ** v)},
-  {id: "f_max", label: "GW f MAX", min: 1, max: 5, step: 0.05, value: 3, unit: "", tip: "Highest gravitational-wave frequency shown. The mass converts this value to w.", transform: v => 10 ** v, format: v => formatFrequency(10 ** v)},
+  {id: "impact_x", label: "IMPACT y₁", min: -2.5, max: 2.5, step: .01, value: .5, unit: "", tip: "Horizontal source position. It can be set independently of y₂."},
+  {id: "impact_y", label: "IMPACT y₂", min: -2.5, max: 2.5, step: .01, value: 0, unit: "", tip: "Vertical source position. It can be set independently of y₁."},
+  {id: "convergence", label: "CONVERGENCE κ", min: 0, max: .75, step: .01, value: 0, unit: "", tip: "Uniform positive surface density from the external environment. Negative convergence is an underdensity, not a lens mass."},
+  {id: "shear", label: "AXIS SHEAR γ", min: 0, max: .75, step: .01, value: 0, unit: "", tip: "Tidal stretch aligned with the horizontal and vertical axes. The range keeps the far-field mapping physical."},
+  {id: "z_lens", label: "LENS REDSHIFT", min: .01, max: 3, step: .01, value: .5, unit: "", tip: "Cosmological redshift of the lens. Planck18 supplies the distances."},
+  {id: "z_source", label: "SOURCE REDSHIFT", min: .05, max: 8, step: .05, value: 1.5, unit: "", tip: "Cosmological redshift of the source; it must exceed the lens redshift."},
+  {id: "mass", label: "LENS MASS M_Lz", min: 0, max: 7, step: .05, value: 2, unit: "", tip: "Redshifted total lens mass in solar masses. It fixes the profile's angular scale and converts f to w.", transform: v => 10 ** v, format: v => `${formatNumber(10 ** v)} M☉`},
+  {id: "f_min", label: "GW f MIN", min: -1, max: 3, step: .05, value: 1, unit: "", tip: "Lowest gravitational-wave frequency shown.", transform: v => 10 ** v, format: v => formatFrequency(10 ** v)},
+  {id: "f_max", label: "GW f MAX", min: 1, max: 5, step: .05, value: 3, unit: "", tip: "Highest gravitational-wave frequency shown.", transform: v => 10 ** v, format: v => formatFrequency(10 ** v)},
+  {id: "axis_ratio", label: "AXIS RATIO q", min: .2, max: 1, step: .01, value: .8, unit: "", models: ["SIE", "eNFW", "EPL"], tip: "Minor-to-major axis ratio for the horizontal/vertical elliptical profile. One is circular."},
+  {id: "core_radius", label: "CORE RADIUS", min: .005, max: 1, step: .005, value: .08, unit: "", models: ["CIS"], tip: "Finite-density core radius for the cored isothermal sphere."},
+  {id: "scale_radius", label: "SCALE RADIUS", min: .02, max: 4, step: .02, value: .3, unit: "", models: ["NFW", "eNFW", "Hernquist"], tip: "Profile transition radius in the natural lens-angle units."},
+  {id: "concentration", label: "CONCENTRATION", min: 2, max: 30, step: .5, value: 8, unit: "", models: ["NFW", "eNFW"], tip: "NFW concentration, setting central density relative to the scale radius."},
+  {id: "slope", label: "DENSITY SLOPE", min: 1.2, max: 2.8, step: .02, value: 2, unit: "", models: ["EPL"], tip: "Three-dimensional power-law density slope."},
 ];
+
+const PANEL_CONTROLS = {
+  sky: {id: "sky_resolution", label: "GRID", min: 5, max: 10, step: 1, value: 7, tip: "Lens-plane samples per side: powers of two from 32 to 1024.", transform: v => 2 ** v, format: v => `${2 ** v}`},
+  frequency: {id: "frequency_samples", label: "POINTS", min: 5, max: 10, step: 1, value: 7, tip: "Frequency samples: powers of two from 32 to 1024.", transform: v => 2 ** v, format: v => `${2 ** v}`},
+  time: {id: "time_samples", label: "POINTS", min: 5, max: 10, step: 1, value: 7, tip: "Displayed samples of the solver's own time response: powers of two from 32 to 1024.", transform: v => 2 ** v, format: v => `${2 ** v}`},
+};
 
 const PANEL_TYPES = [
   ["sky", "Sky view"],
@@ -64,7 +64,7 @@ const STYLE = [
 
 const state = {
   model: "PM",
-  solvers: new Set(["exact", "bgo"]),
+  solvers: new Set(["glow", "bgo"]),
   values: {},
   panels: {sky: 1, frequency: 1, time: 1, complex: 1},
   skyLayers: new Set(["critical", "source", "delayColors", "delayContours"]),
@@ -100,12 +100,13 @@ function createSlider(definition, order) {
   fragment.querySelector(".label-text").textContent = definition.label;
   input.id = `control-${definition.id}`;
   input.min = definition.min;
-  input.max = definition.max;
+  input.max = definition.id === "shear" ? Math.max(0, .98 - (state.values.convergence || 0)) : definition.max;
   input.step = definition.step;
-  input.value = definition.value;
+  if (!(definition.id in state.values)) state.values[definition.id] = definition.value;
+  if (definition.id === "shear") state.values.shear = Math.min(state.values.shear, Number(input.max));
+  input.value = state.values[definition.id];
   input.setAttribute("aria-label", definition.label);
   input.title = definition.tip;
-  state.values[definition.id] = definition.value;
   const show = () => {
     const raw = Number(input.value);
     output.value = definition.format ? definition.format(raw) : `${formatNumber(raw)}${definition.unit || ""}`;
@@ -113,6 +114,10 @@ function createSlider(definition, order) {
   show();
   input.addEventListener("input", () => {
     state.values[definition.id] = Number(input.value);
+    if (definition.id === "convergence") {
+      state.values.shear = Math.min(state.values.shear || 0, Math.max(0, .98 - state.values.convergence));
+      buildControls();
+    }
     show();
     scheduleRefresh();
   });
@@ -121,16 +126,40 @@ function createSlider(definition, order) {
 
 function buildControls() {
   const solverContainer = document.getElementById("solver-controls");
-  SOLVER_CONTROLS.forEach((definition, index) => solverContainer.append(createSlider(definition, index)));
+  solverContainer.replaceChildren();
+  SOLVER_CONTROLS.filter(definition => (definition.id !== "bgo_order" || BGO_MODELS.has(state.model)) &&
+    (definition.id !== "glow_accuracy" || GLOW_MODELS.has(state.model)))
+    .forEach((definition, index) => solverContainer.append(createSlider(definition, index)));
   const parameterContainer = document.getElementById("parameter-controls");
-  PARAMETER_CONTROLS.forEach((definition, index) => parameterContainer.append(createSlider(definition, index)));
+  parameterContainer.replaceChildren();
+  parameterContainer.append(createExternalControl());
+  PARAMETER_CONTROLS.filter(definition => !definition.models || definition.models.includes(state.model))
+    .forEach((definition, index) => parameterContainer.append(createSlider(definition, index + 1)));
   requestAnimationFrame(layoutAllControls);
+}
+
+function createExternalControl() {
+  const label = document.createElement("label");
+  label.className = "external-control tip";
+  label.dataset.order = 0;
+  label.dataset.tip = "Turn on a positive external convergence and horizontal/vertical shear. The permitted range remains physically lens-like.";
+  label.innerHTML = "<span>EXTERNAL POTENTIAL</span>";
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.checked = Boolean(state.values.use_external);
+  input.addEventListener("change", () => { state.values.use_external = input.checked; scheduleRefresh(); });
+  label.append(input);
+  return label;
 }
 
 function buildSolverOptions() {
   const container = document.getElementById("solver-options");
   container.replaceChildren();
-  for (const [id, label, note] of SOLVER_DEFINITIONS[state.model]) {
+  const available = availableSolvers();
+  const allowed = new Set(available.map(([id]) => id));
+  state.solvers = new Set([...state.solvers].filter(id => allowed.has(id)));
+  if (!state.solvers.size) state.solvers.add("bgo");
+  for (const [id, label, note] of available) {
     const row = document.createElement("label");
     row.className = "tip";
     row.dataset.tip = note;
@@ -190,8 +219,13 @@ function buildRequest() {
     const raw = state.values[definition.id];
     parameters[definition.id] = definition.transform ? definition.transform(raw) : raw;
   }
+  parameters.use_external = Boolean(state.values.use_external);
   const solverSettings = {};
   for (const definition of SOLVER_CONTROLS) {
+    const raw = state.values[definition.id];
+    solverSettings[definition.id] = definition.transform ? definition.transform(raw) : raw;
+  }
+  for (const definition of Object.values(PANEL_CONTROLS)) {
     const raw = state.values[definition.id];
     solverSettings[definition.id] = definition.transform ? definition.transform(raw) : raw;
   }
@@ -202,7 +236,7 @@ function layoutControlGroup(containerId) {
   const container = document.getElementById(containerId);
   const more = document.getElementById(container.dataset.overflowMenu);
   const popover = more.querySelector(".overflow-popover");
-  const controls = [...container.querySelectorAll(".mini-control"), ...popover.querySelectorAll(".mini-control")]
+  const controls = [...container.querySelectorAll(".mini-control, .external-control"), ...popover.querySelectorAll(".mini-control, .external-control")]
     .sort((a, b) => Number(a.dataset.order) - Number(b.dataset.order));
   controls.forEach(control => container.append(control));
   more.classList.add("hidden");
@@ -220,9 +254,12 @@ function layoutAllControls() {
 }
 
 function scheduleRefresh() {
-  const delay = Number(document.getElementById("refresh-delay").value);
   clearTimeout(state.autoTimer);
-  if (delay > 0) state.autoTimer = setTimeout(refresh, delay);
+  const mode = document.getElementById("refresh-delay").value;
+  if (mode === "off") return;
+  if (mode === "instant") { state.autoTimer = setTimeout(refresh, 0); return; }
+  const seconds = Math.max(.1, Math.min(3, Number(document.getElementById("timed-delay").value) || .4));
+  state.autoTimer = setTimeout(refresh, 1000 * seconds);
 }
 
 function setStatus(kind, text) {
@@ -249,7 +286,10 @@ async function refresh() {
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Calculation failed");
     state.data = result;
-    state.plots.forEach(plot => plot.setData(result));
+    state.plots.forEach(plot => {
+      try { plot.setData(result); }
+      catch (error) { throw new Error(`${plot.type} panel: ${error.message || error}`); }
+    });
     updateGeometry(result);
     const elapsed = (performance.now() - start) / 1000;
     const message = result.messages.length ? result.messages[0] : `Updated in ${elapsed.toFixed(2)} s`;
@@ -277,7 +317,8 @@ function updateGeometry(data) {
     list.append(chip);
   });
   const c = data.cosmology;
-  document.getElementById("cosmology-note").innerHTML = `Planck18 · D<sub>L</sub> ${formatNumber(c.d_l_mpc)} Mpc · θ<sub>E</sub> ${formatNumber(c.theta_e_mas)} mas`;
+  const radius = c.theta_mi_infinite ? "∞" : `${formatNumber(c.theta_mi_mas)} mas`;
+  document.getElementById("cosmology-note").innerHTML = `Planck18 · θ<sub>E</sub><sup>MI</sup> ${radius}`;
 }
 
 function formatDelay(seconds) {
@@ -309,14 +350,42 @@ function renderPanels() {
   for (const specification of specifications) {
     const panel = document.createElement("article");
     panel.className = "plot-panel";
-    panel.innerHTML = `<div class="panel-title">${panelTitle(specification.type, specification.index)}</div><canvas></canvas><div class="panel-tools"><button class="reset-view" type="button" title="Reset this panel view">⌂</button></div>`;
-    if (specification.type === "sky") panel.querySelector(".panel-tools").prepend(createLayerMenu());
+    panel.innerHTML = `<div class="panel-title">${panelTitle(specification.type, specification.index)}</div><canvas></canvas><div class="panel-tools"><button class="reset-view" type="button" title="Reset this panel view">${homeIcon()}</button></div>`;
+    const tools = panel.querySelector(".panel-tools");
+    if (PANEL_CONTROLS[specification.type]) tools.prepend(createPanelControl(PANEL_CONTROLS[specification.type]));
+    if (specification.type === "sky") tools.prepend(createLayerMenu());
     grid.append(panel);
     const plot = new CanvasPlot(panel, specification.type);
     state.plots.push(plot);
     if (state.data) plot.setData(state.data);
   }
   document.getElementById("panel-summary").textContent = `${specifications.length} panel${specifications.length === 1 ? "" : "s"}`;
+}
+
+function homeIcon() {
+  return '<svg class="home-icon" aria-hidden="true" viewBox="0 0 576 512"><path d="M575.5 240.4 318.8 15.7c-17.5-15.5-44-15.5-61.5 0L.5 240.4C-13 252.2-1.6 274 16.4 274H64v174c0 35.3 28.7 64 64 64h96V368c0-17.7 14.3-32 32-32h64c17.7 0 32 14.3 32 32v144h96c35.3 0 64-28.7 64-64V274h47.6c18 0 29.4-21.8 16-33.6z"/></svg>';
+}
+
+function createPanelControl(definition) {
+  const label = document.createElement("label");
+  label.className = "panel-control tip";
+  label.dataset.tip = definition.tip;
+  label.innerHTML = `<span>${definition.label}</span><output></output>`;
+  const input = document.createElement("input");
+  input.type = "range"; input.min = definition.min; input.max = definition.max; input.step = definition.step;
+  if (!(definition.id in state.values)) state.values[definition.id] = definition.value;
+  input.value = state.values[definition.id];
+  const output = label.querySelector("output");
+  const update = () => { output.value = definition.format(Number(input.value)); };
+  update();
+  input.addEventListener("input", () => {
+    state.values[definition.id] = Number(input.value);
+    document.querySelectorAll(`.panel-control input`).forEach(other => { if (other !== input && other.parentElement.dataset.tip === definition.tip) other.value = input.value; });
+    document.querySelectorAll(`.panel-control output`).forEach(other => { if (other.parentElement.dataset.tip === definition.tip) other.value = definition.format(Number(input.value)); });
+    scheduleRefresh();
+  });
+  label.append(input);
+  return label;
 }
 
 function renderRowSplitters(rows) {
@@ -435,7 +504,7 @@ class CanvasPlot {
     }
     if (this.type === "frequency") return {x0: Math.log10(this.data.frequency_hz[0]), x1: Math.log10(this.data.frequency_hz.at(-1)), y0: 0, y1: 1};
     if (this.type === "complex") return rangeForComplex(this.data);
-    const curves = Object.values(this.data.curves);
+    const curves = Object.values(this.data.curves).filter(curve => Array.isArray(curve.time));
     const time = curves[0]?.time || [0, 1];
     return {x0: time[0], x1: time.at(-1), y0: 0, y1: 1};
   }
@@ -495,8 +564,8 @@ class CanvasPlot {
   drawSky() {
     const box = {left: 43, right: this.width - 14, top: 28, bottom: this.height - 27};
     const f = this.data.field;
-    if (state.skyLayers.has("residual")) drawRaster(this.context, box, this.view, f, f.residual, value => magma((value + 5) / 6));
-    else if (state.skyLayers.has("magnification")) drawRaster(this.context, box, this.view, f, f.log_magnification, value => plasma((value + 1) / 4));
+    if (state.skyLayers.has("residual")) drawRaster(this.context, box, this.view, f, f.residual, value => viridis((value + 6) / 7));
+    else if (state.skyLayers.has("magnification")) drawRaster(this.context, box, this.view, f, f.log_magnification, value => viridis((value + 1) / 4));
     else if (state.skyLayers.has("delayColors")) {
       const values = f.delay;
       const sorted = [...values].sort((a, b) => a - b);
@@ -505,7 +574,7 @@ class CanvasPlot {
       drawRaster(this.context, box, this.view, f, values, value => viridis((value - lo) / Math.max(hi - lo, 1e-9)));
     }
     drawAxes(this.context, box, this.view, "x₁ / θ₀", "x₂ / θ₀");
-    if (state.skyLayers.has("negative")) drawMask(this.context, box, this.view, f, f.negative, "rgba(70,168,255,.28)");
+    if (state.skyLayers.has("negative")) drawMask(this.context, box, this.view, f, f.negative, "rgba(30,144,255,.30)");
     if (state.skyLayers.has("delayContours")) drawSegments(this.context, box, this.view, f.delay_contours, "rgba(238,245,248,.42)", 0.7);
     if (state.skyLayers.has("mapped")) drawPolygons(this.context, box, this.view, f.mapped_cells, "rgba(102,209,143,.34)");
     if (state.skyLayers.has("critical")) {
@@ -542,15 +611,15 @@ class CanvasPlot {
   }
 
   drawTime() {
-    const curves = Object.entries(this.data.curves);
-    if (!curves.length) return drawEmpty(this.context, this.width, this.height, "No selected solver returned a curve");
+    const curves = Object.entries(this.data.curves).filter(([, curve]) => Array.isArray(curve.time_response));
+    if (!curves.length) return drawEmpty(this.context, this.width, this.height, "Choose GLoW to show its internal I(t) response");
     const rows = curves.length > 1 ? 2 : 1;
     const reference = curves[Math.min(1, curves.length - 1)][1];
     for (let row = 0; row < rows; row++) {
       const box = {left: 47, right: this.width - 12, top: 28 + row * (this.height - 50) / rows, bottom: 24 + (row + 1) * (this.height - 50) / rows};
       const series = curves.map(([, curve]) => row === 0 ? curve.time_response : curve.time_response.map((value, i) => value - reference.time_response[i]));
       const range = paddedRange(series.flat());
-      drawSubplot(this.context, box, this.view.x0, this.view.x1, range[0], range[1], curves[0][1].time, series, curves, row ? "ΔF(t)" : "F(t)", row === rows - 1 ? "dimensionless delay t" : "");
+      drawSubplot(this.context, box, this.view.x0, this.view.x1, range[0], range[1], curves[0][1].time, series, curves, row ? "ΔI(t)" : "I(t)", row === rows - 1 ? "dimensionless delay t" : "");
     }
     drawCurveLegend(this.context, curves);
   }
@@ -727,7 +796,7 @@ function drawPolygons(context, box, view, polygons, color) {
 
 function drawImages(context, box, view, data) {
   const source = dataToPixel(box, view, data.source[0], data.source[1]);
-  context.save(); context.fillStyle = "#ff7d6e"; context.beginPath(); context.arc(...source, 5, 0, 2 * Math.PI); context.fill();
+  context.save(); context.fillStyle = "#228b22"; context.strokeStyle = "#00ff7f"; context.lineWidth = 2; context.beginPath(); context.arc(...source, 5, 0, 2 * Math.PI); context.fill(); context.stroke();
   data.images.forEach(image => {
     const point = dataToPixel(box, view, image.x[0], image.x[1]);
     const major = Math.sqrt(Math.max(image.shape.major, .35));
@@ -761,7 +830,7 @@ function drawSkyLegend(context, box, layers) {
   if (layers.has("critical")) {
     [["#39d3d6", "critical"], ["#f2c14e", "caustic"]].forEach(([color, label]) => { context.fillStyle = color; context.fillRect(x, y - 6, 12, 2); context.fillStyle = "#d5e0e5"; context.fillText(label, x + 16, y); x += 63; });
   }
-  if (layers.has("source")) { context.fillStyle = "#ff7d6e"; context.beginPath(); context.arc(x + 4, y - 3, 3, 0, 2 * Math.PI); context.fill(); context.fillStyle = "#d5e0e5"; context.fillText("source", x + 11, y); }
+  if (layers.has("source")) { context.fillStyle = "#228b22"; context.strokeStyle = "#00ff7f"; context.beginPath(); context.arc(x + 4, y - 3, 3, 0, 2 * Math.PI); context.fill(); context.stroke(); context.fillStyle = "#d5e0e5"; context.fillText("source", x + 11, y); }
   context.restore();
 }
 
@@ -794,11 +863,16 @@ function makeSplitter(id, direction) {
 
 document.getElementById("model-select").addEventListener("change", event => {
   state.model = event.target.value;
+  buildControls();
   buildSolverOptions();
   scheduleRefresh();
 });
 document.getElementById("refresh-button").addEventListener("click", refresh);
-document.getElementById("refresh-delay").addEventListener("change", scheduleRefresh);
+document.getElementById("refresh-delay").addEventListener("change", event => {
+  document.getElementById("timed-delay-wrap").classList.toggle("hidden", event.target.value !== "timed");
+  scheduleRefresh();
+});
+document.getElementById("timed-delay").addEventListener("input", scheduleRefresh);
 window.addEventListener("resize", () => { layoutAllControls(); state.plots.forEach(plot => plot.resize()); });
 
 buildControls();

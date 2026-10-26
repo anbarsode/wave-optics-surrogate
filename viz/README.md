@@ -27,18 +27,22 @@ $$
 - \psi(\boldsymbol x).
 $$
 
-The point-mass and singular isothermal sphere (SIS) potentials used in the sky view are
+The angular unit is calculated rather than entered as a separate profile scale.  For the
+redshifted mass \(M_{Lz}\), the point-mass angular scale uses the physical mass
+\(M=M_{Lz}/(1+z_l)\) and Planck18 angular-diameter distances.  Point mass, SIS, SIE, CIS, NFW,
+elliptical NFW, elliptical power-law, and Hernquist profiles can then be selected in those units.
+For example, the first two potentials are
 
 $$
-\psi_{\rm PM}=b^2\log |\boldsymbol x|, \qquad
-\psi_{\rm SIS}=b|\boldsymbol x|.
+\psi_{\rm PM}=\log |\boldsymbol x|, \qquad
+\psi_{\rm SIS}=|\boldsymbol x|.
 $$
 
 External convergence and shear add
 
 $$
 \psi_{\rm ext}=\frac{\kappa}{2}(x_1^2+x_2^2)
-+\frac{\gamma_1}{2}(x_1^2-x_2^2)+\gamma_2x_1x_2.
++\frac{\gamma}{2}(x_1^2-x_2^2).
 $$
 
 The physical gravitational-wave frequency is converted to dimensionless frequency using the
@@ -48,21 +52,22 @@ $$
 w = 2\pi f\,\frac{4GM_{Lz}}{c^3}.
 $$
 
-Planck18 supplies angular-diameter distances and the displayed equivalent point-mass Einstein
-angle. The BGO solver is the stationary-phase expansion documented in `bgo/REPORT.md` and follows
+The external convergence is restricted to \(\kappa\geq0\), and the shear is aligned with the
+display axes. The app also reports \(\theta_E^{\rm MI}\): the angular radius of a source-plane
+disk with the same area as the mapped negative-parity grid cells. Each cell is first mapped through
+the lens equation and its four-corner polygon area is summed; equivalently this applies
+\(dA_y=|\det A|dA_x\), rather than using the lens-plane area. If the negative-parity region reaches
+the calculation boundary, the displayed radius is \(\infty\).
+
+The BGO solver is the stationary-phase expansion documented in `bgo/REPORT.md` and follows
 [Takahashi (2004), Appendix B](https://arxiv.org/abs/astro-ph/0402165). GLoW supplies the analytic
-point-mass, semianalytic radial SIS, and resolution-checked contour calculations.
+point-mass, semianalytic radial SIS, and resolution-checked contour calculations. BGO order zero
+is the geometric-optics result, so it replaces a separate geometric-optics solver. Analytic and
+series solvers are offered when the selected profile supports them.
 
-The time-domain comparison removes the unlensed delta function and displays the direct positive-
-frequency transform
-
-$$
-F_t(t)=\operatorname{Re}\left[\frac{1}{\pi}\int_0^\infty
-\bigl(F(w)-1\bigr)e^{-iwt}\,dw\right].
-$$
-
-It is a comparison diagnostic rather than a replacement for the specialised singular-response
-handling in `ab_initio/helper_functions.py`.
+The time panel displays GLoW's own internal \(I(t)\) response. The visualizer does not construct a
+manual Fourier transform of \(F(w)\), preserving GLoW's specialised treatment of singular
+responses.
 
 ## Interaction
 
